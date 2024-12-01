@@ -1,0 +1,17 @@
+export const countries = [
+  { value: 'US', label: 'United States' },
+  { value: 'GB', label: 'United Kingdom' },
+  { value: 'FR', label: 'France' },
+  { value: 'DE', label: 'Germany' },
+  { value: 'IT', label: 'Italy' },
+  { value: 'ES', label: 'Spain' },
+  { value: 'JP', label: 'Japan' },
+  { value: 'AU', label: 'Australia' },
+  { value: 'CA', label: 'Canada' },
+  { value: 'BR', label: 'Brazil' },
+  { value: 'CN', label: 'China' },
+  { value: 'IN', label: 'India' },
+  { value: 'SG', label: 'Singapore' },
+  { value: 'AE', label: 'United Arab Emirates' },
+  { value: 'TH', label: 'Thailand' },
+] as const; 
