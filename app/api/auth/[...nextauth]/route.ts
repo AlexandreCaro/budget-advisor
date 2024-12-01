@@ -1,8 +1,9 @@
-import NextAuth, { Session } from "next-auth"
+import NextAuth from "next-auth"
 import GoogleProvider from "next-auth/providers/google"
 import { PrismaAdapter } from "@auth/prisma-adapter"
 import { prisma } from "@/lib/prisma"
-import { AdapterUser } from "@auth/core/adapters"
+import type { Session } from "next-auth"
+import type { AdapterUser } from "@auth/core/adapters"
 
 const handler = NextAuth({
   adapter: PrismaAdapter(prisma),

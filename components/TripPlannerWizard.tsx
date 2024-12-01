@@ -14,7 +14,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { currencies } from '@/lib/currencies'
 import { estimateCosts } from '@/lib/costEstimation'
 import { format } from 'date-fns'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Switch } from "@/components/ui/switch"
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend } from 'recharts'
 import { Label as ChartLabel } from 'recharts'
@@ -46,6 +46,7 @@ import {
 import { Check, ChevronsUpDown } from "lucide-react"
 import { Combobox } from "@/components/ui/combobox"
 import { countries } from '@/lib/countries'
+import type { FormState, ExpenseData, UpdateExpenseFunction } from '@/types/trip-planner'
 
 type ExpenseCategory = {
   name: string;
@@ -149,6 +150,16 @@ const saveTripPlan = async (tripData: any, userId: string) => {
   }
 }
 
+// Add this type definition
+type PolarViewBox = {
+  cx: number;
+  cy: number;
+  innerRadius: number;
+  outerRadius: number;
+  startAngle: number;
+  endAngle: number;
+}
+
 export function TripPlannerWizard() {
   const { data: session } = useSession()
   const router = useRouter()
@@ -179,7 +190,7 @@ export function TripPlannerWizard() {
     mode: 'none'
   })
 
-  const [inputState, setInputState] = useState<InputState>({
+  const [_inputState, setInputState] = useState<InputState>({
     isEditing: false,
     category: ''
   })
@@ -532,7 +543,7 @@ export function TripPlannerWizard() {
               <div className="space-y-2">
                 <Label htmlFor="country">Select your destination</Label>
                 <Combobox
-                  options={countries}
+                  options={[...countries]}
                   value={tripData.country}
                   onValueChange={(value) => {
                     handleInputChange('country', value)
@@ -1126,8 +1137,7 @@ export function TripPlannerWizard() {
                   <ChartLabel
                     content={({ viewBox }) => {
                       if (!viewBox) return null;
-                      const cx = (viewBox.x ?? 0) + (viewBox.width ?? 0) / 2
-                      const cy = (viewBox.y ?? 0) + (viewBox.height ?? 0) / 2
+                      const { innerRadius, outerRadius, cx, cy } = viewBox as PolarViewBox;
                       return (
                         <text
                           x={cx}
@@ -1273,7 +1283,7 @@ export function TripPlannerWizard() {
                 const absoluteValue = expense.budgetType === 'absolute' 
                   ? parseFloat(expense.budgetValue) || 0
                   : ((parseFloat(expense.budgetValue) || 0) * overallBudget / 100)
-                
+
                 const percentageValue = expense.budgetType === 'percentage'
                   ? parseFloat(expense.budgetValue) || 0
                   : ((parseFloat(expense.budgetValue) || 0) / overallBudget * 100)

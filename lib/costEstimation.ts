@@ -39,7 +39,7 @@ export function estimateDailyCost(location: string, travelStyle: 'budget' | 'mod
   return baseRates[travelStyle]
 }
 
-export function estimateCosts(country: string, travelers: number, nights: number, startDate: Date) {
+export function estimateCosts(_country: string, _travelers: number, _nights: number, _startDate: Date) {
   // Your estimation logic here
   return {
     flight: { min: 0, max: 0 },
@@ -50,5 +50,9 @@ export function estimateCosts(country: string, travelers: number, nights: number
     shopping: { min: 0, max: 0 },
     carRental: { min: 0, max: 0 },
   }
+}
+
+export function calculateDefaultBudget(_country: string, _travelers: number, _nights: number, _startDate: Date): number {
+  return 1000; // your calculation logic here
 }
 

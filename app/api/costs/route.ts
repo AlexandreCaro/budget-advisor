@@ -1,46 +1,56 @@
 import { NextResponse } from 'next/server'
 
-export async function POST(req: Request) {
-  const { country, travelers, nights } = await req.json()
+type CostRange = {
+  min: number;
+  max: number;
+}
 
-  // This would be your actual Perplexity API call
-  // For now, we'll return more realistic default ranges based on the country
-  const costRanges = {
-    'USA': {
-      accommodation: { min: 150 * nights, max: 300 * nights },
-      transportation: { min: 50 * nights, max: 100 * nights },
-      flight: { min: 500, max: 1200 }
-    },
-    'France': {
-      accommodation: { min: 120 * nights, max: 250 * nights },
-      transportation: { min: 40 * nights, max: 80 * nights },
-      flight: { min: 600, max: 1400 }
-    },
-    'Japan': {
-      accommodation: { min: 100 * nights, max: 300 * nights },
-      transportation: { min: 30 * nights, max: 70 * nights },
-      flight: { min: 800, max: 1600 }
-    },
-    'Australia': {
-      accommodation: { min: 130 * nights, max: 280 * nights },
-      transportation: { min: 45 * nights, max: 90 * nights },
-      flight: { min: 1000, max: 2000 }
-    },
-    'Brazil': {
-      accommodation: { min: 80 * nights, max: 200 * nights },
-      transportation: { min: 25 * nights, max: 60 * nights },
-      flight: { min: 700, max: 1500 }
-    }
-  }
+type CountryCosts = {
+  accommodation: CostRange;
+  transportation: CostRange;
+  flight: CostRange;
+}
+
+type CostRanges = {
+  [key: string]: CountryCosts;
+}
+
+const costRanges: CostRanges = {
+  USA: {
+    accommodation: { min: 100, max: 300 },
+    transportation: { min: 30, max: 100 },
+    flight: { min: 300, max: 1000 }
+  },
+  France: {
+    accommodation: { min: 80, max: 250 },
+    transportation: { min: 20, max: 80 },
+    flight: { min: 400, max: 1200 }
+  },
+  // ... other countries
+}
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url)
+  const country = searchParams.get('country') || 'USA'
+  const travelers = parseInt(searchParams.get('travelers') || '1')
+  const nights = parseInt(searchParams.get('nights') || '1')
 
   // Adjust costs based on number of travelers
   const roomsNeeded = Math.ceil(travelers / 2)
-  const costs = costRanges[country] || costRanges['USA']
+  const costs = costRanges[country as keyof typeof costRanges] || costRanges['USA']
   
   costs.accommodation.min *= roomsNeeded
   costs.accommodation.max *= roomsNeeded
-  costs.transportation.min *= Math.sqrt(travelers)
-  costs.transportation.max *= Math.sqrt(travelers)
+
+  // Adjust for number of nights
+  costs.accommodation.min *= nights
+  costs.accommodation.max *= nights
+
+  // Adjust transportation costs for travelers
+  costs.transportation.min *= travelers
+  costs.transportation.max *= travelers
+
+  // Adjust flight costs for travelers
   costs.flight.min *= travelers
   costs.flight.max *= travelers
 
