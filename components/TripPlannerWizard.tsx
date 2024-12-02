@@ -47,6 +47,10 @@ import { Check, ChevronsUpDown } from "lucide-react"
 import { Combobox } from "@/components/ui/combobox"
 import { countries } from '@/lib/countries'
 import type { FormState, ExpenseData, UpdateExpenseFunction } from '@/types/trip-planner'
+import { Icons } from "@/components/ui/icons"
+import { ArrowLeft } from "lucide-react"
+import { FormField } from '@/components/trip-planner/form-field'
+import { validateStep } from '@/components/trip-planner/form-validation'
 
 type ExpenseCategory = {
   name: string;
@@ -58,7 +62,18 @@ type ExpenseCategory = {
   defaultPercentage: number;
 }
 
-const defaultExpenses: ExpenseCategory[] = [
+const STEPS = [
+  "Name",
+  "Destination",
+  "Dates",
+  "Travelers",
+  "Budget",
+  "Review",
+] as const
+
+const DEFAULT_CATEGORIES = ['accommodation', 'food']
+
+const defaultExpenses = [
   { name: 'Flights', key: 'flight', preBooked: false, cost: '', budgetType: 'percentage', budgetValue: '30', defaultPercentage: 30 },
   { name: 'Accommodation', key: 'accommodation', preBooked: false, cost: '', budgetType: 'percentage', budgetValue: '30', defaultPercentage: 30 },
   { name: 'Local Transportation', key: 'localTransportation', preBooked: false, cost: '', budgetType: 'percentage', budgetValue: '10', defaultPercentage: 10 },
@@ -66,7 +81,7 @@ const defaultExpenses: ExpenseCategory[] = [
   { name: 'Cultural Activities', key: 'activities', preBooked: false, cost: '', budgetType: 'percentage', budgetValue: '10', defaultPercentage: 10 },
   { name: 'Shopping', key: 'shopping', preBooked: false, cost: '', budgetType: 'percentage', budgetValue: '5', defaultPercentage: 5 },
   { name: 'Car Rental', key: 'carRental', preBooked: false, cost: '', budgetType: 'percentage', budgetValue: '0', defaultPercentage: 0 },
-]
+] as const
 
 type BudgetAlert = {
   show: boolean;
@@ -81,9 +96,6 @@ type InputState = {
   isEditing: boolean;
   category: string;
 }
-
-// Add this constant for default categories
-const DEFAULT_CATEGORIES = ['flight', 'accommodation', 'food', 'shopping']
 
 // Add this validation function
 const validatePercentageInput = (value: string): string => {
@@ -160,201 +172,314 @@ type PolarViewBox = {
   endAngle: number;
 }
 
-export function TripPlannerWizard() {
-  const { data: session } = useSession()
+type TripPlan = {
+  id: string;
+  name: string;
+  status: 'DRAFT' | 'PLANNED' | 'ACTIVE' | 'CLOSED';
+  country: string;
+  startDate: Date;
+  endDate: Date;
+  travelers: number;
+  currency: string;
+  overallBudget: number;
+  expenses: Array<{
+    name: string;
+    key: string;
+    preBooked: boolean;
+    cost: number | null;
+    budgetType: 'percentage' | 'absolute';
+    budgetValue: number;
+    defaultPercentage: number;
+  }>;
+}
+
+// Add to props
+interface TripPlannerWizardProps {
+  initialData?: TripPlan;
+  onBack?: () => void;
+}
+
+type TripPlanData = {
+  id?: string;
+  name: string;
+  status: 'DRAFT' | 'PLANNED' | 'ACTIVE' | 'CLOSED';
+  country: string;
+  startDate: Date;
+  endDate: Date;
+  travelers: string;
+  currency: string;
+  overallBudget: string;
+  selectedCategories: string[];
+  expenses: Array<{
+    name: string;
+    key: string;
+    preBooked: boolean;
+    cost: string;
+    budgetType: 'percentage' | 'absolute';
+    budgetValue: string;
+    defaultPercentage: number;
+  }>;
+}
+
+export function TripPlannerWizard({ initialData, onBack }: TripPlannerWizardProps) {
   const router = useRouter()
-
+  const { data: session } = useSession()
   const [step, setStep] = useState(1)
-  const [tripData, setTripData] = useState({
-    country: '',
-    startDate: new Date(),
-    endDate: new Date(),
-    travelers: '1',
-    currency: 'USD',
-    overallBudget: '',
-    selectedCategories: DEFAULT_CATEGORIES, // Initialize with default categories
-    expenses: defaultExpenses.map(expense => ({
-      ...expense,
-      budgetValue: DEFAULT_CATEGORIES.includes(expense.key) ? expense.defaultPercentage.toString() : '0',
-    })),
+  const [formData, setFormData] = useState<TripPlanData>(() => {
+    if (initialData) {
+      // When editing, map existing expenses to form data
+      const existingExpenseKeys = initialData.expenses.map(e => e.key)
+      
+      return {
+        id: initialData.id,
+        name: initialData.name,
+        status: initialData.status,
+        country: initialData.country || "",
+        startDate: initialData.startDate ? new Date(initialData.startDate) : new Date(),
+        endDate: initialData.endDate ? new Date(initialData.endDate) : new Date(),
+        travelers: initialData.travelers?.toString() || "1",
+        currency: initialData.currency || "USD",
+        overallBudget: initialData.overallBudget?.toString() || "",
+        selectedCategories: existingExpenseKeys, // Use the actual selected categories
+        expenses: defaultExpenses.map(expense => {
+          // Find matching expense from initialData
+          const existingExpense = initialData.expenses.find(e => e.key === expense.key)
+          if (existingExpense) {
+            return {
+              ...expense,
+              preBooked: existingExpense.preBooked,
+              cost: existingExpense.cost?.toString() || '',
+              budgetType: existingExpense.budgetType as 'percentage' | 'absolute',
+              budgetValue: existingExpense.budgetValue.toString(),
+              defaultPercentage: existingExpense.defaultPercentage,
+            }
+          }
+          // For categories not in initialData, use defaults
+          return {
+            ...expense,
+            budgetValue: existingExpenseKeys.includes(expense.key) ? 
+              expense.defaultPercentage.toString() : '0',
+          }
+        }),
+      }
+    }
+    
+    // Default state for new trip
+    return {
+      name: "",
+      status: 'DRAFT',
+      country: "",
+      startDate: new Date(),
+      endDate: new Date(),
+      travelers: "1",
+      currency: "USD",
+      overallBudget: "",
+      selectedCategories: DEFAULT_CATEGORIES,
+      expenses: defaultExpenses.map(expense => ({
+        ...expense,
+        budgetValue: DEFAULT_CATEGORIES.includes(expense.key) ? 
+          expense.defaultPercentage.toString() : '0',
+      })),
+    }
   })
-
-  const [costEstimates, setCostEstimates] = useState<ReturnType<typeof estimateCosts> | null>(null)
-
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [errors, setErrors] = useState<{[key: string]: string}>({})
-
   const [budgetAlert, setBudgetAlert] = useState<BudgetAlert>({
     show: false,
     message: '',
     totalPercentage: 100,
     mode: 'none'
   })
-
-  const [_inputState, setInputState] = useState<InputState>({
+  const [showOverspendAlerts, setShowOverspendAlerts] = useState(true)
+  const [globalTracking, setGlobalTracking] = useState(true)
+  const [shownAlerts, setShownAlerts] = useState<Set<string>>(new Set())
+  const [inputState, setInputState] = useState<InputState>({
     isEditing: false,
     category: ''
   })
-
-  const [shownAlerts, setShownAlerts] = useState<Set<string>>(new Set())
-
-  const [showOverspendAlerts, setShowOverspendAlerts] = useState(true)
-
-  const [globalTracking, setGlobalTracking] = useState(true)
-
-  const nights = useMemo(() => {
-    return Math.ceil((tripData.endDate.getTime() - tripData.startDate.getTime()) / (1000 * 3600 * 24))
-  }, [tripData.startDate, tripData.endDate])
-
-  useEffect(() => {
-    if (tripData.country && tripData.travelers && nights > 0) {
-      const estimates = estimateCosts(tripData.country, parseInt(tripData.travelers), nights, tripData.startDate)
-      setCostEstimates(estimates)
-    }
-  }, [tripData.country, tripData.travelers, nights, tripData.startDate])
+  const [costEstimates, setCostEstimates] = useState<ReturnType<typeof estimateCosts> | null>(null)
 
   const handleInputChange = (field: string, value: any) => {
-    setTripData(prev => ({ ...prev, [field]: value }))
-  }
-
-  const handleExpenseChange = (index: number, field: keyof ExpenseCategory, value: any) => {
-    return new Promise<void>((resolve) => {
-      setTripData(prev => {
-        // Find the actual expense by key instead of using index
-        const expenseKey = prev.expenses
-          .filter(expense => prev.selectedCategories.includes(expense.key))[index].key
-
-        const newExpenses = prev.expenses.map(expense => {
-          if (expense.key === expenseKey) {
-            // Validate percentage input
-            if (field === 'budgetValue' && expense.budgetType === 'percentage') {
-              return { ...expense, [field]: validatePercentageInput(value) }
-            }
-            return { ...expense, [field]: value }
-          }
-          return expense
-        })
-        
-        return {
-          ...prev,
-          expenses: newExpenses
-        }
-      })
-      resolve()
-    })
+    setFormData(prev => ({ ...prev, [field]: value }))
   }
 
   const handleCategorySelection = (selectedKeys: string[]) => {
-    setTripData(prev => {
-      // Calculate current total percentage excluding newly added categories
-      const currentTotal = prev.expenses
-        .filter(expense => prev.selectedCategories.includes(expense.key))
-        .reduce((total, expense) => {
-          if (expense.budgetType === 'percentage') {
-            return total + (parseFloat(expense.budgetValue) || 0)
-          }
-          return total + calculateDefaultPercentage(parseFloat(expense.budgetValue) || 0)
-        }, 0)
+    console.log('Selected categories:', selectedKeys) // Debug log
+    
+    setFormData(prev => {
+      // Update selected categories
+      const newSelectedCategories = selectedKeys
 
-      // Find newly added categories
-      const newCategories = selectedKeys.filter(key => !prev.selectedCategories.includes(key))
-      
+      // Update expenses with new selections
+      const newExpenses = prev.expenses.map(expense => {
+        if (newSelectedCategories.includes(expense.key)) {
+          // Keep existing expense data if it's selected
+          return expense
+        }
+        // Reset unselected categories with explicit type
+        return {
+          ...expense,
+          preBooked: false,
+          budgetType: 'percentage' as const,
+          budgetValue: '0'
+        }
+      })
+
+      console.log('Updated form data:', {
+        selectedCategories: newSelectedCategories,
+        expensesCount: newExpenses.length
+      })
+
       return {
         ...prev,
-        selectedCategories: selectedKeys,
-        expenses: prev.expenses.map(expense => {
-          if (newCategories.includes(expense.key)) {
-            // New categories start with 0% to maintain current total
-            return {
-              ...expense,
-              preBooked: false,
-              budgetType: 'percentage',
-              budgetValue: '0'
-            }
-          }
-          if (!selectedKeys.includes(expense.key)) {
-            // Reset unselected categories
-            return {
-              ...expense,
-              preBooked: false,
-              budgetType: 'percentage',
-              budgetValue: '0'
-            }
-          }
-          // Keep existing categories as they are
-          return expense
-        })
+        selectedCategories: newSelectedCategories,
+        expenses: newExpenses
       }
     })
-  }
 
-  const validateStep = (currentStep: number): boolean => {
-    const newErrors: {[key: string]: string} = {}
-
-    switch (currentStep) {
-      case 1:
-        if (!tripData.country) {
-          newErrors.country = 'Please select a destination'
-        }
-        if (!tripData.startDate || !tripData.endDate) {
-          newErrors.dates = 'Please select both start and end dates'
-        }
-        if (!tripData.overallBudget || parseFloat(tripData.overallBudget) <= 0) {
-          newErrors.budget = 'Please enter a valid budget amount'
-        }
-        break
-      case 2:
-        if (tripData.selectedCategories.length === 0) {
-          newErrors.categories = 'Please select at least one expense category'
-        }
-        break
+    // Clear category error when selections are made
+    if (selectedKeys.length > 0) {
+      setErrors(prev => ({ ...prev, categories: '' }))
     }
-
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
   }
 
-  const handleNext = () => {
-    if (validateStep(step)) {
-      if (step === 3) {
-        const totalAllocated = calculateTotalPercentage()
-        const overSpentCategories = getOverspentCategories()
-
-        if (totalAllocated !== 100) {
-          setBudgetAlert({
-            show: true,
-            mode: 'initial',
-            message: 'Please allocate exactly 100% of the budget before proceeding.',
-            totalPercentage: totalAllocated,
-            action: adjustPercentagesAutomatically
-          })
-          return
+  const handleExpenseChange = (index: number, field: string, value: any) => {
+    setFormData(prev => ({
+      ...prev,
+      expenses: prev.expenses.map((expense, i) => {
+        if (i === index) {
+          return { ...expense, [field]: value }
         }
+        return expense
+      })
+    }))
+  }
 
-        if (totalAllocated > 100) {
-          setBudgetAlert({
-            show: true,
-            mode: 'initial',
-            message: `Budget is overspent by ${(totalAllocated - 100).toFixed(1)}%. Please adjust the allocation before proceeding.`,
-            totalPercentage: totalAllocated,
-            action: adjustPercentagesAutomatically
-          })
-          return
-        }
+  const handleSubmit = async () => {
+    try {
+      setIsSubmitting(true)
+      setError(null)
+
+      if (!session?.user?.id) {
+        console.log('No user session, redirecting to sign in...')
+        signIn('google')
+        return
       }
-      setShownAlerts(new Set())
-      setStep(prev => prev + 1)
+
+      console.log('Starting to save trip plan...', {
+        userId: session.user.id,
+        formData
+      })
+
+      const response = await fetch('/api/trip-plans', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          credentials: 'include'
+        },
+        body: JSON.stringify({
+          userId: session.user.id,
+          country: formData.country,
+          startDate: formData.startDate,
+          endDate: formData.endDate,
+          travelers: parseInt(formData.travelers),
+          currency: formData.currency,
+          overallBudget: parseFloat(formData.overallBudget),
+          expenses: formData.expenses
+            .filter(expense => formData.selectedCategories.includes(expense.key))
+            .map(expense => ({
+              name: expense.name,
+              key: expense.key,
+              preBooked: expense.preBooked,
+              cost: expense.preBooked ? parseFloat(expense.cost) : null,
+              budgetType: expense.budgetType,
+              budgetValue: parseFloat(expense.budgetValue),
+              defaultPercentage: expense.defaultPercentage,
+              isTracked: true,
+            })),
+        }),
+      })
+
+      console.log('Response status:', response.status)
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to save trip plan')
+      }
+
+      const savedPlan = await response.json()
+      console.log('Trip plan saved successfully:', savedPlan)
+
+      router.push('/trip-monitor')
+    } catch (error) {
+      console.error('Error saving trip plan:', error)
+      if (error instanceof Error && error.message === 'Unauthorized') {
+        signIn('google')
+      } else {
+        setError(error instanceof Error ? error.message : 'Failed to save trip plan')
+      }
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleNext = async () => {
+    console.log('handleNext called, current step:', step)
+    if (validateStep(step, formData, setErrors)) {
+      try {
+        if (step === 1) {
+          // Create initial plan with name only
+          const response = await fetch('/api/trip-plans', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: formData.name }),
+          })
+
+          if (!response.ok) throw new Error('Failed to create trip plan')
+          const data = await response.json()
+          setFormData(prev => ({ ...prev, id: data.id }))
+        } 
+        else if (step === 2) {
+          // Save trip details
+          const response = await fetch(`/api/trip-plans/${formData.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              country: formData.country,
+              startDate: formData.startDate,
+              endDate: formData.endDate,
+              travelers: parseInt(formData.travelers),
+              currency: formData.currency,
+              overallBudget: parseFloat(formData.overallBudget),
+            }),
+          })
+
+          if (!response.ok) {
+            const errorData = await response.json()
+            throw new Error(errorData.error || 'Failed to update trip details')
+          }
+        }
+
+        setStep(prev => prev + 1)
+      } catch (error) {
+        console.error('Error in handleNext:', error)
+        setError(error instanceof Error ? error.message : 'Failed to save plan')
+      }
+    } else {
+      console.log('Step validation failed, errors:', errors)
     }
   }
 
   const handleBack = () => {
     setShownAlerts(new Set())
-    setStep(prev => prev - 1)
+    setStep(prev => Math.max(1, prev - 1))
   }
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: tripData.currency,
+      currency: formData.currency,
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(value)
@@ -367,7 +492,7 @@ export function TripPlannerWizard() {
   }
 
   const calculateDefaultPercentage = (absoluteValue: number) => {
-    const budget = parseFloat(tripData.overallBudget)
+    const budget = parseFloat(formData.overallBudget)
     if (!budget || budget <= 0) return 0
     return Math.round((absoluteValue / budget) * 100)
   }
@@ -383,9 +508,9 @@ export function TripPlannerWizard() {
   }
 
   const calculateRemainingBudget = () => {
-    const overallBudget = parseFloat(tripData.overallBudget) || 0
-    const allocatedBudget = tripData.expenses
-      .filter(expense => tripData.selectedCategories.includes(expense.key))
+    const overallBudget = parseFloat(formData.overallBudget) || 0
+    const allocatedBudget = formData.expenses
+      .filter(expense => formData.selectedCategories.includes(expense.key))
       .reduce((total, expense) => {
         if (expense.budgetType === 'absolute') {
           return total + (parseFloat(expense.budgetValue) || 0)
@@ -396,8 +521,8 @@ export function TripPlannerWizard() {
   }
 
   const calculateTotalPercentage = () => {
-    return tripData.expenses
-      .filter(expense => tripData.selectedCategories.includes(expense.key))
+    return formData.expenses
+      .filter(expense => formData.selectedCategories.includes(expense.key))
       .reduce((total, expense) => {
         if (expense.budgetType === 'percentage') {
           return total + (parseFloat(expense.budgetValue) || 0)
@@ -410,9 +535,9 @@ export function TripPlannerWizard() {
     const currentTotal = calculateTotalPercentage()
     if (Math.abs(currentTotal - 100) < 0.01) return
 
-    const selectedExpenses = tripData.expenses
+    const selectedExpenses = formData.expenses
       .filter(expense => 
-        tripData.selectedCategories.includes(expense.key) && 
+        formData.selectedCategories.includes(expense.key) && 
         expense.budgetType === 'percentage'
       )
 
@@ -420,8 +545,8 @@ export function TripPlannerWizard() {
     const adjustmentFactor = 100 / currentTotal
 
     // First pass: adjust all percentages
-    let updatedExpenses = tripData.expenses.map(expense => {
-      if (tripData.selectedCategories.includes(expense.key) && expense.budgetType === 'percentage') {
+    let updatedExpenses = formData.expenses.map(expense => {
+      if (formData.selectedCategories.includes(expense.key) && expense.budgetType === 'percentage') {
         const newPercentage = parseFloat((parseFloat(expense.budgetValue) * adjustmentFactor).toFixed(1))
         return {
           ...expense,
@@ -433,7 +558,7 @@ export function TripPlannerWizard() {
 
     // Calculate new total after first adjustment
     const newTotal = updatedExpenses
-      .filter(expense => tripData.selectedCategories.includes(expense.key))
+      .filter(expense => formData.selectedCategories.includes(expense.key))
       .reduce((total, expense) => {
         if (expense.budgetType === 'percentage') {
           return total + parseFloat(expense.budgetValue)
@@ -462,7 +587,7 @@ export function TripPlannerWizard() {
       })
     }
 
-    setTripData(prev => ({
+    setFormData(prev => ({
       ...prev,
       expenses: updatedExpenses
     }))
@@ -513,13 +638,13 @@ export function TripPlannerWizard() {
     
     if (totalAllocated <= 100) return []
 
-    return tripData.expenses
+    return formData.expenses
       .filter(expense => 
-        tripData.selectedCategories.includes(expense.key) &&
+        formData.selectedCategories.includes(expense.key) &&
         !expense.preBooked &&
         ((expense.budgetType === 'percentage' && parseFloat(expense.budgetValue) > expense.defaultPercentage) ||
          (expense.budgetType === 'absolute' && 
-          parseFloat(expense.budgetValue) > (parseFloat(tripData.overallBudget) * expense.defaultPercentage / 100)))
+          parseFloat(expense.budgetValue) > (parseFloat(formData.overallBudget) * expense.defaultPercentage / 100)))
       )
       .map(expense => ({
         name: expense.name,
@@ -537,6 +662,29 @@ export function TripPlannerWizard() {
         return (
           <>
             <CardHeader>
+              <CardTitle>Name Your Trip</CardTitle>
+              <CardDescription>
+                Give your trip a memorable name
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <FormField
+                  id="name"
+                  label="Trip Name"
+                  value={formData.name}
+                  onChange={(value) => handleInputChange('name', value)}
+                  error={errors.name}
+                  required
+                />
+              </div>
+            </CardContent>
+          </>
+        )
+      case 2:
+        return (
+          <>
+            <CardHeader>
               <CardTitle>Trip Details</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -544,12 +692,15 @@ export function TripPlannerWizard() {
                 <Label htmlFor="country">Select your destination</Label>
                 <Combobox
                   options={[...countries]}
-                  value={tripData.country}
+                  value={formData.country}
                   onValueChange={(value) => {
                     handleInputChange('country', value)
                     setErrors(prev => ({ ...prev, country: '' }))
                   }}
                   placeholder="Select country"
+                  className={cn(
+                    errors.country ? 'border-red-500 ring-1 ring-red-500' : ''
+                  )}
                   error={!!errors.country}
                   emptyText="No countries found"
                 />
@@ -564,12 +715,13 @@ export function TripPlannerWizard() {
                         variant={"outline"}
                         className={cn(
                           "w-full justify-start text-left font-normal",
-                          !tripData.startDate && "text-muted-foreground"
+                          !formData.startDate && "text-muted-foreground",
+                          errors.dates ? 'border-red-500 ring-1 ring-red-500' : ''
                         )}
                       >
                         <CalendarIcon className="mr-2 h-4 w-4" />
-                        {tripData.startDate ? (
-                          format(tripData.startDate, "PPP")
+                        {formData.startDate ? (
+                          format(formData.startDate, "PPP")
                         ) : (
                           <span>Start date</span>
                         )}
@@ -578,7 +730,7 @@ export function TripPlannerWizard() {
                     <PopoverContent className="w-auto p-0">
                       <Calendar
                         mode="single"
-                        selected={tripData.startDate}
+                        selected={formData.startDate}
                         onSelect={(date) => date && handleInputChange('startDate', date)}
                         initialFocus
                       />
@@ -591,12 +743,13 @@ export function TripPlannerWizard() {
                         variant={"outline"}
                         className={cn(
                           "w-full justify-start text-left font-normal",
-                          !tripData.endDate && "text-muted-foreground"
+                          !formData.endDate && "text-muted-foreground",
+                          errors.dates ? 'border-red-500 ring-1 ring-red-500' : ''
                         )}
                       >
                         <CalendarIcon className="mr-2 h-4 w-4" />
-                        {tripData.endDate ? (
-                          format(tripData.endDate, "PPP")
+                        {formData.endDate ? (
+                          format(formData.endDate, "PPP")
                         ) : (
                           <span>End date</span>
                         )}
@@ -605,11 +758,11 @@ export function TripPlannerWizard() {
                     <PopoverContent className="w-auto p-0">
                       <Calendar
                         mode="single"
-                        selected={tripData.endDate}
+                        selected={formData.endDate}
                         onSelect={(date) => date && handleInputChange('endDate', date)}
                         initialFocus
                         disabled={(date) => 
-                          date < tripData.startDate || 
+                          date < formData.startDate || 
                           date < new Date()
                         }
                       />
@@ -621,7 +774,7 @@ export function TripPlannerWizard() {
               <div className="space-y-2">
                 <Label htmlFor="travelers">Number of travelers</Label>
                 <Select
-                  value={tripData.travelers}
+                  value={formData.travelers}
                   onValueChange={(value) => handleInputChange('travelers', value)}
                 >
                   <SelectTrigger id="travelers">
@@ -637,16 +790,16 @@ export function TripPlannerWizard() {
               <div className="space-y-2">
                 <Label htmlFor="currency">Select your budget currency</Label>
                 <Select
-                  value={tripData.currency}
+                  value={formData.currency}
                   onValueChange={(value) => handleInputChange('currency', value)}
                 >
-                  <SelectTrigger id="currency">
-                    <SelectValue placeholder="Choose a currency" />
+                  <SelectTrigger id="currency" className="w-full">
+                    <SelectValue placeholder="Select currency" />
                   </SelectTrigger>
                   <SelectContent>
                     {currencies.map((currency) => (
                       <SelectItem key={currency.code} value={currency.code}>
-                        {currency.code} - {currency.name} ({currency.symbol})
+                        {currency.code} - {currency.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -655,60 +808,78 @@ export function TripPlannerWizard() {
               <div className="space-y-2">
                 <Label htmlFor="overallBudget">Overall Budget</Label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 transform -translate-y-1/2">
-                    {currencies.find(c => c.code === tripData.currency)?.symbol}
-                  </span>
                   <Input
                     id="overallBudget"
                     type="number"
                     placeholder="Enter your overall budget"
-                    value={tripData.overallBudget}
-                    onWheel={preventWheelChange}
+                    value={formData.overallBudget}
                     onChange={(e) => {
-                      handleInputChange('overallBudget', e.target.value)
-                      setErrors(prev => ({ ...prev, budget: '' }))
+                      const value = e.target.value.replace(/^0+/, '') || '0'
+                      handleInputChange('overallBudget', value)
                     }}
-                    className={cn("pl-8", errors.budget ? 'border-red-500' : '')}
+                    className={cn(
+                      "w-full pl-8",
+                      errors.budget ? 'border-2 border-red-500 focus:ring-red-500' : ''
+                    )}
+                    required
                   />
+                  <div className="absolute inset-y-0 left-2 flex items-center pointer-events-none">
+                    <span className="text-muted-foreground">
+                      {currencies.find(c => c.code === formData.currency)?.symbol}
+                    </span>
+                  </div>
                 </div>
-                {errors.budget && <p className="text-sm text-red-500">{errors.budget}</p>}
+                {errors.budget && (
+                  <p className="text-sm text-red-500">Budget is required</p>
+                )}
               </div>
             </CardContent>
           </>
         )
-      case 2:
+      case 3:
         return (
           <>
             <CardHeader>
               <CardTitle>Select Expense Categories</CardTitle>
               <CardDescription>
-                Flight, Accommodation, Food & Beverages, and Shopping are included by default
+                Select at least one expense category for your trip
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
+              <div className={cn(
+                "space-y-4",
+                errors.categories ? 'p-4 border border-red-500 rounded-lg' : ''
+              )}>
                 {defaultExpenses.map((expense) => (
                   <div key={expense.key} className="flex items-center space-x-2">
                     <Checkbox
                       id={`category-${expense.key}`}
-                      checked={tripData.selectedCategories.includes(expense.key)}
-                      disabled={DEFAULT_CATEGORIES.includes(expense.key)} // Disable default categories
+                      checked={formData.selectedCategories.includes(expense.key)}
                       onCheckedChange={(checked) => {
                         const newSelectedCategories = checked
-                          ? [...tripData.selectedCategories, expense.key]
-                          : tripData.selectedCategories.filter(key => key !== expense.key)
-                        handleCategorySelection(newSelectedCategories)
-                        setErrors(prev => ({ ...prev, categories: '' }))
+                          ? [...formData.selectedCategories, expense.key]
+                          : formData.selectedCategories.filter(key => key !== expense.key)
+                        
+                        // Ensure at least one category is selected
+                        if (newSelectedCategories.length > 0) {
+                          handleCategorySelection(newSelectedCategories)
+                          setErrors(prev => ({ ...prev, categories: '' }))
+                        } else {
+                          setErrors(prev => ({ 
+                            ...prev, 
+                            categories: 'At least one category must be selected' 
+                          }))
+                        }
                       }}
                     />
                     <Label 
                       htmlFor={`category-${expense.key}`}
                       className={cn(
-                        DEFAULT_CATEGORIES.includes(expense.key) && "font-medium text-primary"
+                        DEFAULT_CATEGORIES.includes(expense.key) && "font-medium"
                       )}
                     >
                       {expense.name}
-                      {DEFAULT_CATEGORIES.includes(expense.key) && " (Required)"}
+                      {DEFAULT_CATEGORIES.includes(expense.key) && " (Recommended)"}
                     </Label>
                   </div>
                 ))}
@@ -719,7 +890,7 @@ export function TripPlannerWizard() {
             </CardContent>
           </>
         )
-      case 3:
+      case 4:
         return (
           <>
             <CardHeader>
@@ -736,12 +907,12 @@ export function TripPlannerWizard() {
                   Show alerts when budget is overspent
                 </Label>
               </div>
-              {tripData.expenses.filter(expense => tripData.selectedCategories.includes(expense.key)).map((expense, filteredIndex) => {
+              {formData.expenses.filter(expense => formData.selectedCategories.includes(expense.key)).map((expense, filteredIndex) => {
                 const totalAllocated = calculateTotalPercentage()
                 const isOverspent = totalAllocated > 100 && (
                   (expense.budgetType === 'percentage' && parseFloat(expense.budgetValue) > expense.defaultPercentage) ||
                   (expense.budgetType === 'absolute' && 
-                   parseFloat(expense.budgetValue) > (parseFloat(tripData.overallBudget) * expense.defaultPercentage / 100))
+                   parseFloat(expense.budgetValue) > (parseFloat(formData.overallBudget) * expense.defaultPercentage / 100))
                 )
                 const categoryColor = chartConfig[expense.key as keyof typeof chartConfig].color
 
@@ -791,7 +962,7 @@ export function TripPlannerWizard() {
                         <Label htmlFor={`${expense.key}-cost`}>Cost</Label>
                         <div className="relative">
                           <span className="absolute left-3 top-1/2 transform -translate-y-1/2">
-                            {currencies.find(c => c.code === tripData.currency)?.symbol}
+                            {currencies.find(c => c.code === formData.currency)?.symbol}
                           </span>
                           <Input
                             id={`${expense.key}-cost`}
@@ -813,7 +984,7 @@ export function TripPlannerWizard() {
                             onValueChange={(value) => {
                               const newType = value as 'percentage' | 'absolute'
                               const currentValue = parseFloat(expense.budgetValue) || 0
-                              const overallBudget = parseFloat(tripData.overallBudget) || 1 // Prevent division by zero
+                              const overallBudget = parseFloat(formData.overallBudget) || 1 // Prevent division by zero
                               
                               let newValue: string
                               
@@ -845,7 +1016,7 @@ export function TripPlannerWizard() {
                             <div className="relative">
                               {expense.budgetType === 'absolute' && (
                                 <span className="absolute left-3 top-1/2 transform -translate-y-1/2">
-                                  {currencies.find(c => c.code === tripData.currency)?.symbol}
+                                  {currencies.find(c => c.code === formData.currency)?.symbol}
                                 </span>
                               )}
                               <Input
@@ -902,7 +1073,7 @@ export function TripPlannerWizard() {
                             </div>
                             {expense.budgetType === 'percentage' && (
                               <p className="text-sm text-gray-500">
-                                Amount: {formatCurrency(parseFloat(tripData.overallBudget) * parseFloat(expense.budgetValue) / 100)}
+                                Amount: {formatCurrency(parseFloat(formData.overallBudget) * parseFloat(expense.budgetValue) / 100)}
                               </p>
                             )}
                           </div>
@@ -920,9 +1091,9 @@ export function TripPlannerWizard() {
             </CardContent>
           </>
         )
-      case 4:
-        const summaryData: CategorySummary[] = tripData.expenses
-          .filter(expense => tripData.selectedCategories.includes(expense.key))
+      case 5:
+        const summaryData: CategorySummary[] = formData.expenses
+          .filter(expense => formData.selectedCategories.includes(expense.key))
           .map(expense => ({
             name: expense.name,
             key: expense.key,
@@ -930,7 +1101,7 @@ export function TripPlannerWizard() {
               ? parseFloat(expense.budgetValue)
               : calculateDefaultPercentage(parseFloat(expense.budgetValue)),
             allocatedAmount: expense.budgetType === 'percentage'
-              ? parseFloat(tripData.overallBudget) * parseFloat(expense.budgetValue) / 100
+              ? parseFloat(formData.overallBudget) * parseFloat(expense.budgetValue) / 100
               : parseFloat(expense.budgetValue),
             defaultPercentage: expense.defaultPercentage,
             estimatedAmount: calculateAverageEstimate(expense.key as keyof ReturnType<typeof estimateCosts>),
@@ -944,17 +1115,17 @@ export function TripPlannerWizard() {
             <CardHeader>
               <CardTitle>Trip Budget Summary</CardTitle>
               <CardDescription>
-                {format(tripData.startDate, "PPP")} - {format(tripData.endDate, "PPP")} • {tripData.travelers} traveler(s) • {tripData.country}
+                {format(formData.startDate, "PPP")} - {format(formData.endDate, "PPP")} • {formData.travelers} traveler(s) • {formData.country}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-xl font-semibold">
-                    Total Budget: {formatCurrency(parseFloat(tripData.overallBudget))}
+                    Total Budget: {formatCurrency(parseFloat(formData.overallBudget))}
                   </h3>
                   <p className="text-sm text-muted-foreground">
-                    In {currencies.find(c => c.code === tripData.currency)?.name}
+                    In {currencies.find(c => c.code === formData.currency)?.name}
                   </p>
                 </div>
                 <div className="flex items-center gap-4">
@@ -1085,8 +1256,8 @@ export function TripPlannerWizard() {
   }
 
   const BudgetChart = () => {
-    const allocatedData = tripData.expenses
-      .filter(expense => tripData.selectedCategories.includes(expense.key))
+    const allocatedData = formData.expenses
+      .filter(expense => formData.selectedCategories.includes(expense.key))
       .map(expense => ({
         category: expense.key,
         name: expense.name,
@@ -1102,7 +1273,7 @@ export function TripPlannerWizard() {
       ? [...allocatedData, { category: 'unallocated', name: 'Unallocated', value: unallocatedPercentage }]
       : allocatedData
 
-    const totalBudget = formatCurrency(parseFloat(tripData.overallBudget))
+    const totalBudget = formatCurrency(parseFloat(formData.overallBudget))
 
     return (
       <Card className="mt-6">
@@ -1223,14 +1394,14 @@ export function TripPlannerWizard() {
   )
 
   const ManualAdjustmentDialog = () => {
-    const [localExpenses, setLocalExpenses] = useState(tripData.expenses)
+    const [localExpenses, setLocalExpenses] = useState(formData.expenses)
     const [totalAllocation, setTotalAllocation] = useState(budgetAlert.totalPercentage)
-    const overallBudget = parseFloat(tripData.overallBudget) || 1
+    const overallBudget = parseFloat(formData.overallBudget) || 1
 
     useEffect(() => {
       const newTotal = localExpenses
         .filter(expense => 
-          tripData.selectedCategories.includes(expense.key) &&
+          formData.selectedCategories.includes(expense.key) &&
           !expense.preBooked
         )
         .reduce((total, expense) => {
@@ -1276,7 +1447,7 @@ export function TripPlannerWizard() {
           <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto">
             {localExpenses
               .filter(expense => 
-                tripData.selectedCategories.includes(expense.key) && 
+                formData.selectedCategories.includes(expense.key) && 
                 !expense.preBooked
               )
               .map((expense, index) => {
@@ -1302,7 +1473,7 @@ export function TripPlannerWizard() {
                       <span>%</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span>{currencies.find(c => c.code === tripData.currency)?.symbol}</span>
+                      <span>{currencies.find(c => c.code === formData.currency)?.symbol}</span>
                       <Input
                         type="number"
                         value={absoluteValue.toFixed(2)}
@@ -1321,7 +1492,7 @@ export function TripPlannerWizard() {
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                setTripData(prev => ({ ...prev, expenses: localExpenses }))
+                setFormData(prev => ({ ...prev, expenses: localExpenses }))
                 const newTotal = totalAllocation
                 if (Math.abs(newTotal - 100) < 0.1) {
                   setBudgetAlert(prev => ({ ...prev, mode: 'none' }))
@@ -1350,7 +1521,7 @@ export function TripPlannerWizard() {
     }
 
     try {
-      const savedPlan = await saveTripPlan(tripData, session.user.id)
+      const savedPlan = await saveTripPlan(formData, session.user.id)
       router.push(`/trip-plans/${savedPlan.id}`)
     } catch (error) {
       // Handle error (show toast notification, etc.)
@@ -1358,30 +1529,69 @@ export function TripPlannerWizard() {
     }
   }
 
+  const createInitialPlan = async (name: string) => {
+    try {
+      const response = await fetch('/api/trip-plans', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+
+      if (!response.ok) throw new Error('Failed to create trip plan')
+      
+      const plan = await response.json()
+      setFormData(prev => ({ ...prev, id: plan.id }))
+      return plan
+    } catch (error) {
+      console.error('Error creating initial plan:', error)
+      throw error
+    }
+  }
+
   return (
-    <Card className="w-full max-w-2xl mx-auto shadow-sm">
-      {renderStep()}
-      <CardFooter className="flex justify-between border-t bg-muted/10 mt-6">
-        {step > 1 && (
-          <Button onClick={handleBack} variant="outline">
-            Back
-          </Button>
-        )}
-        {step < 4 ? (
-          <Button onClick={handleNext}>Next</Button>
-        ) : (
-          <Button 
-            onClick={handleSave}
-            disabled={!session?.user}
-            className="bg-primary hover:bg-primary/90"
-          >
-            {session?.user ? 'Save Trip Plan' : 'Sign in to Save'}
-          </Button>
-        )}
-      </CardFooter>
-      <BudgetAlertDialog />
-      <ManualAdjustmentDialog />
-    </Card>
+    <div className="space-y-4">
+      {initialData && onBack && (
+        <Button
+          variant="ghost"
+          onClick={onBack}
+          className="mb-4"
+        >
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          Back to Trip Details
+        </Button>
+      )}
+      <Card className="w-full max-w-2xl mx-auto shadow-sm">
+        {renderStep()}
+        <CardFooter className="flex justify-between border-t bg-muted/10 mt-6">
+          {step > 1 && (
+            <Button
+              variant="outline"
+              onClick={handleBack}
+              disabled={step === 1 || isSubmitting}
+            >
+              Back
+            </Button>
+          )}
+          {step < STEPS.length && ( // Only show Next/Save button if not on the last step
+            <Button 
+              onClick={handleNext}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <>
+                  <Icons.loader className="mr-2 h-4 w-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                'Next'
+              )}
+            </Button>
+          )}
+        </CardFooter>
+        <BudgetAlertDialog />
+        <ManualAdjustmentDialog />
+      </Card>
+    </div>
   )
 }
 

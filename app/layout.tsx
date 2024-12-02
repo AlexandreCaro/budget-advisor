@@ -1,6 +1,8 @@
 import { Inter } from "next/font/google"
 import { getServerSession } from "next-auth"
 import AuthProvider from "@/components/providers/session-provider"
+import { UIProvider } from "@/components/providers/ui-provider"
+import { Header } from "@/components/layout/header"
 import Sidebar from "@/components/layout/sidebar"
 import "./globals.css"
 
@@ -17,14 +19,19 @@ export default async function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={inter.className}>
         <AuthProvider session={session}>
-          <div className="flex min-h-screen">
-            <Sidebar />
-            <main className="flex-1 md:pl-64">
-              <div className="container mx-auto p-6">
-                {children}
+          <UIProvider>
+            <div className="relative min-h-screen">
+              <Header />
+              <div className="flex h-[calc(100vh-3.5rem)]">
+                <Sidebar />
+                <main className="flex-1 overflow-y-auto md:pl-64">
+                  <div className="container mx-auto p-4 md:p-6">
+                    {children}
+                  </div>
+                </main>
               </div>
-            </main>
-          </div>
+            </div>
+          </UIProvider>
         </AuthProvider>
       </body>
     </html>

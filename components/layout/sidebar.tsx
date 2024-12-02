@@ -12,7 +12,9 @@ import {
   Settings, 
   HelpCircle,
   Tags,
-  X
+  X,
+  Plane,
+  LineChart
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -27,14 +29,19 @@ const Sidebar = () => {
       href: '/dashboard',
     },
     {
+      label: 'Trip Monitor',
+      icon: LineChart,
+      href: '/trip-monitor',
+    },
+    {
+      label: 'Trip Planner',
+      icon: Plane,
+      href: '/trip-planner',
+    },
+    {
       label: 'Transactions',
       icon: CreditCard,
       href: '/transactions',
-    },
-    {
-      label: 'Budgets',
-      icon: Folder,
-      href: '/budgets',
     },
     {
       label: 'Categories',
