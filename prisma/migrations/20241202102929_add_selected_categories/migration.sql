@@ -1,3 +1,6 @@
+-- CreateEnum
+CREATE TYPE "TripStatus" AS ENUM ('DRAFT', 'PLANNED', 'ACTIVE', 'CLOSED');
+
 -- CreateTable
 CREATE TABLE "Account" (
     "id" TEXT NOT NULL,
@@ -40,15 +43,18 @@ CREATE TABLE "User" (
 -- CreateTable
 CREATE TABLE "TripPlan" (
     "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "status" "TripStatus" NOT NULL DEFAULT 'DRAFT',
+    "country" TEXT,
+    "startDate" TIMESTAMP(3),
+    "endDate" TIMESTAMP(3),
+    "travelers" INTEGER,
+    "currency" TEXT,
+    "overallBudget" DOUBLE PRECISION,
+    "selectedCategories" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
-    "userId" TEXT NOT NULL,
-    "country" TEXT NOT NULL,
-    "startDate" TIMESTAMP(3) NOT NULL,
-    "endDate" TIMESTAMP(3) NOT NULL,
-    "travelers" INTEGER NOT NULL,
-    "currency" TEXT NOT NULL,
-    "overallBudget" DOUBLE PRECISION NOT NULL,
 
     CONSTRAINT "TripPlan_pkey" PRIMARY KEY ("id")
 );
@@ -59,14 +65,28 @@ CREATE TABLE "Expense" (
     "tripPlanId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "key" TEXT NOT NULL,
-    "preBooked" BOOLEAN NOT NULL,
+    "preBooked" BOOLEAN NOT NULL DEFAULT false,
     "cost" DOUBLE PRECISION,
     "budgetType" TEXT NOT NULL,
     "budgetValue" DOUBLE PRECISION NOT NULL,
     "defaultPercentage" DOUBLE PRECISION NOT NULL,
     "isTracked" BOOLEAN NOT NULL DEFAULT true,
+    "spent" DOUBLE PRECISION NOT NULL DEFAULT 0,
 
     CONSTRAINT "Expense_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "BankConnection" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "accessToken" TEXT NOT NULL,
+    "refreshToken" TEXT NOT NULL,
+    "provider" TEXT NOT NULL DEFAULT 'truelayer',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "BankConnection_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
@@ -77,6 +97,9 @@ CREATE UNIQUE INDEX "Session_sessionToken_key" ON "Session"("sessionToken");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
+
+-- CreateIndex
+CREATE INDEX "BankConnection_userId_idx" ON "BankConnection"("userId");
 
 -- AddForeignKey
 ALTER TABLE "Account" ADD CONSTRAINT "Account_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -89,3 +112,6 @@ ALTER TABLE "TripPlan" ADD CONSTRAINT "TripPlan_userId_fkey" FOREIGN KEY ("userI
 
 -- AddForeignKey
 ALTER TABLE "Expense" ADD CONSTRAINT "Expense_tripPlanId_fkey" FOREIGN KEY ("tripPlanId") REFERENCES "TripPlan"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "BankConnection" ADD CONSTRAINT "BankConnection_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

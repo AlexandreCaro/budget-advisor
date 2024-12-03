@@ -24,7 +24,7 @@ export default async function RootLayout({
               <Header />
               <div className="flex h-[calc(100vh-3.5rem)]">
                 <Sidebar />
-                <main className="flex-1 overflow-y-auto md:pl-64">
+                <main className="flex-1 overflow-y-auto md:pl-64 bg-slate-100">
                   <div className="container mx-auto p-4 md:p-6">
                     {children}
                   </div>

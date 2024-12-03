@@ -50,7 +50,15 @@ import type { FormState, ExpenseData, UpdateExpenseFunction } from '@/types/trip
 import { Icons } from "@/components/ui/icons"
 import { ArrowLeft } from "lucide-react"
 import { FormField } from '@/components/trip-planner/form-field'
-import { validateStep } from '@/components/trip-planner/form-validation'
+import { useToast } from "@/components/ui/use-toast";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { AlertCircle } from "lucide-react";
+import { validateStep, getInputClassName, getSelectTriggerClassName, getDatePickerClassName, getCategoryContainerClassName, getCurrencyTriggerClassName, getBudgetInputClassName, type FieldState, clearFieldError } from '@/components/trip-planner/form-validation'
+import { BudgetAllocation } from '@/components/trip-planner/budget-allocation';
+import { getPerplexityEstimates, getFlightEstimates } from '@/lib/cost-estimation/perplexity';
+import { BudgetAllocationPreview } from '@/components/trip-planner/budget-allocation-preview';
+import { handleStepSave } from '@/components/trip-planner/form-validation'
+import { DEFAULT_EXPENSE_CATEGORIES } from '@/lib/cost-estimation/perplexity';
 
 type ExpenseCategory = {
   name: string;
@@ -72,16 +80,6 @@ const STEPS = [
 ] as const
 
 const DEFAULT_CATEGORIES = ['accommodation', 'food']
-
-const defaultExpenses = [
-  { name: 'Flights', key: 'flight', preBooked: false, cost: '', budgetType: 'percentage', budgetValue: '30', defaultPercentage: 30 },
-  { name: 'Accommodation', key: 'accommodation', preBooked: false, cost: '', budgetType: 'percentage', budgetValue: '30', defaultPercentage: 30 },
-  { name: 'Local Transportation', key: 'localTransportation', preBooked: false, cost: '', budgetType: 'percentage', budgetValue: '10', defaultPercentage: 10 },
-  { name: 'Food & Beverages', key: 'food', preBooked: false, cost: '', budgetType: 'percentage', budgetValue: '15', defaultPercentage: 15 },
-  { name: 'Cultural Activities', key: 'activities', preBooked: false, cost: '', budgetType: 'percentage', budgetValue: '10', defaultPercentage: 10 },
-  { name: 'Shopping', key: 'shopping', preBooked: false, cost: '', budgetType: 'percentage', budgetValue: '5', defaultPercentage: 5 },
-  { name: 'Car Rental', key: 'carRental', preBooked: false, cost: '', budgetType: 'percentage', budgetValue: '0', defaultPercentage: 0 },
-] as const
 
 type BudgetAlert = {
   show: boolean;
@@ -195,7 +193,10 @@ type TripPlan = {
 
 // Add to props
 interface TripPlannerWizardProps {
-  initialData?: TripPlan;
+  initialData?: {
+    step?: number;  // Add this to allow forcing a specific step
+    [key: string]: any;
+  };
   onBack?: () => void;
 }
 
@@ -221,70 +222,98 @@ type TripPlanData = {
   }>;
 }
 
+function TripHeader({ 
+  step, 
+  formData, 
+  initialData, 
+  onBack, 
+  router 
+}: { 
+  step: number, 
+  formData: TripPlanData,
+  initialData?: any,
+  onBack?: () => void,
+  router: any
+}) {
+  return (
+    <div className="flex items-center justify-between border-b p-6">
+      <div className="space-y-1">
+        <h2 className="text-2xl font-bold">
+          {formData.name || 'New Trip'}
+        </h2>
+        {step > 2 && formData.country && (
+          <div className="text-sm text-muted-foreground">
+            {formData.country}
+            {formData.startDate && formData.endDate && (
+              <span className="ml-2">
+                • {format(formData.startDate, "MMM d")} - {format(formData.endDate, "MMM d, yyyy")}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+      <div className="flex gap-2">
+        {initialData && (
+          <>
+            <Button variant="outline" onClick={onBack}>
+              Back to Trips
+            </Button>
+            <Button variant="outline" onClick={() => router.push('/trip-monitor')}>
+              Open Monitor
+            </Button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function TripPlannerWizard({ initialData, onBack }: TripPlannerWizardProps) {
-  const router = useRouter()
   const { data: session } = useSession()
-  const [step, setStep] = useState(1)
-  const [formData, setFormData] = useState<TripPlanData>(() => {
-    if (initialData) {
-      // When editing, map existing expenses to form data
-      const existingExpenseKeys = initialData.expenses.map(e => e.key)
-      
-      return {
-        id: initialData.id,
-        name: initialData.name,
-        status: initialData.status,
-        country: initialData.country || "",
-        startDate: initialData.startDate ? new Date(initialData.startDate) : new Date(),
-        endDate: initialData.endDate ? new Date(initialData.endDate) : new Date(),
-        travelers: initialData.travelers?.toString() || "1",
-        currency: initialData.currency || "USD",
-        overallBudget: initialData.overallBudget?.toString() || "",
-        selectedCategories: existingExpenseKeys, // Use the actual selected categories
-        expenses: defaultExpenses.map(expense => {
-          // Find matching expense from initialData
-          const existingExpense = initialData.expenses.find(e => e.key === expense.key)
-          if (existingExpense) {
-            return {
-              ...expense,
-              preBooked: existingExpense.preBooked,
-              cost: existingExpense.cost?.toString() || '',
-              budgetType: existingExpense.budgetType as 'percentage' | 'absolute',
-              budgetValue: existingExpense.budgetValue.toString(),
-              defaultPercentage: existingExpense.defaultPercentage,
-            }
-          }
-          // For categories not in initialData, use defaults
-          return {
-            ...expense,
-            budgetValue: existingExpenseKeys.includes(expense.key) ? 
-              expense.defaultPercentage.toString() : '0',
-          }
-        }),
-      }
+  const router = useRouter()
+  const { toast } = useToast()
+
+  // Determine initial step based on data completeness
+  const getInitialStep = (data: any) => {
+    if (!data) return 1;
+    
+    // Check step 2 completion (country, dates, budget)
+    if (!data.country || !data.startDate || !data.endDate || !data.overallBudget) {
+      return 2;
     }
     
-    // Default state for new trip
-    return {
-      name: "",
-      status: 'DRAFT',
-      country: "",
-      startDate: new Date(),
-      endDate: new Date(),
-      travelers: "1",
-      currency: "USD",
-      overallBudget: "",
-      selectedCategories: DEFAULT_CATEGORIES,
-      expenses: defaultExpenses.map(expense => ({
-        ...expense,
-        budgetValue: DEFAULT_CATEGORIES.includes(expense.key) ? 
-          expense.defaultPercentage.toString() : '0',
-      })),
+    // Check step 3 completion (categories)
+    if (!data.selectedCategories?.length) {
+      return 3;
     }
+    
+    // If all complete, go to step 4
+    return 4;
+  };
+
+  const [step, setStep] = useState(getInitialStep(initialData));
+  
+  // Initialize form data with initial data or defaults
+  const [formData, setFormData] = useState({
+    id: initialData?.id || '',
+    name: initialData?.name || '',
+    country: initialData?.country || '',
+    startDate: initialData?.startDate ? new Date(initialData.startDate) : new Date(),
+    endDate: initialData?.endDate ? new Date(initialData.endDate) : new Date(),
+    travelers: initialData?.travelers?.toString() || '1',
+    currency: initialData?.currency || 'USD',
+    overallBudget: initialData?.overallBudget?.toString() || '',
+    selectedCategories: initialData?.selectedCategories || DEFAULT_CATEGORIES,
+    expenses: initialData?.expenses || DEFAULT_EXPENSE_CATEGORIES.map(expense => ({
+      ...expense,
+      budgetValue: DEFAULT_CATEGORIES.includes(expense.key) ? expense.defaultPercentage.toString() : '0',
+    })),
+    status: initialData?.status || 'DRAFT'
   })
+
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [errors, setErrors] = useState<{[key: string]: string}>({})
+  const [errors, setErrors] = useState<Record<string, { error: boolean; message?: string }>>({});
   const [budgetAlert, setBudgetAlert] = useState<BudgetAlert>({
     show: false,
     message: '',
@@ -299,62 +328,140 @@ export function TripPlannerWizard({ initialData, onBack }: TripPlannerWizardProp
     category: ''
   })
   const [costEstimates, setCostEstimates] = useState<ReturnType<typeof estimateCosts> | null>(null)
+  const [debugInfo, setDebugInfo] = useState<string>('');
+
+  // Add state for cost estimates
+  const [estimates, setEstimates] = useState<{
+    [category: string]: {
+      budget: {
+        min: number;
+        max: number;
+        average: number;
+        confidence: number;
+      };
+      medium: {
+        min: number;
+        max: number;
+        average: number;
+        confidence: number;
+      };
+      premium: {
+        min: number;
+        max: number;
+        average: number;
+        confidence: number;
+      };
+    };
+  } | null>(null);
+
+  // Move Perplexity call to step 4
+  useEffect(() => {
+    const fetchEstimates = async () => {
+      if (step !== 4) return;
+      
+      if (!formData.country || !formData.startDate || !formData.endDate || !formData.currency || !formData.travelers) {
+        console.log('Missing required data for estimates');
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/perplexity', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            country: formData.country,
+            startDate: formData.startDate,
+            endDate: formData.endDate,
+            travelers: formData.travelers,
+            currency: formData.currency,
+            selectedCategories: formData.selectedCategories
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch estimates');
+        }
+
+        const results = await response.json();
+        setEstimates(results);
+      } catch (error) {
+        console.error('Error fetching estimates:', error);
+        toast({
+          variant: "destructive",
+          title: "Error",
+          description: "Failed to fetch cost estimates"
+        });
+      }
+    };
+
+    fetchEstimates();
+  }, [step, formData.country, formData.startDate, formData.endDate, formData.currency, formData.travelers]);
+
+  useEffect(() => {
+    // @ts-ignore
+    window.testPerplexity = async () => {
+      const testData = {
+        country: 'United Kingdom',
+        startDate: new Date('2024-12-07'),
+        endDate: new Date('2024-12-14'),
+        travelers: '2',
+        currency: 'USD',
+        selectedCategories: ['flight', 'food', 'accommodation', 'localTransportation', 'shopping']
+      };
+      
+      try {
+        const results = await getPerplexityEstimates(testData);
+        console.table(Object.entries(results).map(([category, estimate]) => ({
+          Category: category,
+          Range: `$${estimate.min} - $${estimate.max}`,
+          Average: `$${estimate.average}`,
+          Confidence: `${(estimate.confidence * 100).toFixed(1)}%`
+        })));
+      } catch (error) {
+        console.error('Test failed:', error);
+      }
+    };
+    
+    console.log('Debug function ready: Run window.testPerplexity() to test');
+  }, []);
+
+  const [isSaving, setIsSaving] = useState(false);
+  const [hasChanges, setHasChanges] = useState(false);
+  const [pendingSave, setPendingSave] = useState(false);
 
   const handleInputChange = (field: string, value: any) => {
-    setFormData(prev => ({ ...prev, [field]: value }))
-  }
-
-  const handleCategorySelection = (selectedKeys: string[]) => {
-    console.log('Selected categories:', selectedKeys) // Debug log
-    
-    setFormData(prev => {
-      // Update selected categories
-      const newSelectedCategories = selectedKeys
-
-      // Update expenses with new selections
-      const newExpenses = prev.expenses.map(expense => {
-        if (newSelectedCategories.includes(expense.key)) {
-          // Keep existing expense data if it's selected
-          return expense
-        }
-        // Reset unselected categories with explicit type
-        return {
-          ...expense,
-          preBooked: false,
-          budgetType: 'percentage' as const,
-          budgetValue: '0'
-        }
-      })
-
-      console.log('Updated form data:', {
-        selectedCategories: newSelectedCategories,
-        expensesCount: newExpenses.length
-      })
-
-      return {
-        ...prev,
-        selectedCategories: newSelectedCategories,
-        expenses: newExpenses
-      }
-    })
-
-    // Clear category error when selections are made
-    if (selectedKeys.length > 0) {
-      setErrors(prev => ({ ...prev, categories: '' }))
-    }
-  }
-
-  const handleExpenseChange = (index: number, field: string, value: any) => {
+    setHasChanges(true);
     setFormData(prev => ({
       ...prev,
-      expenses: prev.expenses.map((expense, i) => {
-        if (i === index) {
-          return { ...expense, [field]: value }
+      [field]: value
+    }));
+  };
+
+  const handleCategorySelection = (categories: string[]) => {
+    setHasChanges(true);
+    setFormData(prev => ({
+      ...prev,
+      selectedCategories: categories
+    }));
+  };
+
+  const handleExpenseUpdate = (key: string, updates: Partial<TripExpenseCategory>) => {
+    setHasChanges(true);
+    setFormData(prev => ({
+      ...prev,
+      expenses: prev.expenses.map(expense => {
+        if (expense.key === key) {
+          return {
+            ...expense,
+            ...updates
+          };
         }
-        return expense
+        return expense;
       })
-    }))
-  }
+    }));
+  };
 
   const handleSubmit = async () => {
     try {
@@ -387,8 +494,8 @@ export function TripPlannerWizard({ initialData, onBack }: TripPlannerWizardProp
           currency: formData.currency,
           overallBudget: parseFloat(formData.overallBudget),
           expenses: formData.expenses
-            .filter(expense => formData.selectedCategories.includes(expense.key))
-            .map(expense => ({
+            .filter((expense: ExpenseData) => formData.selectedCategories.includes(expense.key))
+            .map((expense: ExpenseData) => ({
               name: expense.name,
               key: expense.key,
               preBooked: expense.preBooked,
@@ -425,51 +532,58 @@ export function TripPlannerWizard({ initialData, onBack }: TripPlannerWizardProp
   }
 
   const handleNext = async () => {
-    console.log('handleNext called, current step:', step)
-    if (validateStep(step, formData, setErrors)) {
-      try {
-        if (step === 1) {
-          // Create initial plan with name only
-          const response = await fetch('/api/trip-plans', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: formData.name }),
-          })
+    if (isSubmitting) return;
 
-          if (!response.ok) throw new Error('Failed to create trip plan')
-          const data = await response.json()
-          setFormData(prev => ({ ...prev, id: data.id }))
-        } 
-        else if (step === 2) {
-          // Save trip details
-          const response = await fetch(`/api/trip-plans/${formData.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              country: formData.country,
-              startDate: formData.startDate,
-              endDate: formData.endDate,
-              travelers: parseInt(formData.travelers),
-              currency: formData.currency,
-              overallBudget: parseFloat(formData.overallBudget),
-            }),
-          })
+    try {
+      setIsSubmitting(true);
 
-          if (!response.ok) {
-            const errorData = await response.json()
-            throw new Error(errorData.error || 'Failed to update trip details')
-          }
-        }
-
-        setStep(prev => prev + 1)
-      } catch (error) {
-        console.error('Error in handleNext:', error)
-        setError(error instanceof Error ? error.message : 'Failed to save plan')
+      // Validate current step
+      const validation = await validateStep(step, formData);
+      if (!validation.isValid) {
+        setErrors(validation.errors || {});
+        setIsSubmitting(false);
+        return;
       }
-    } else {
-      console.log('Step validation failed, errors:', errors)
+
+      // Clear errors if validation passed
+      setErrors({});
+
+      // Start background save if needed
+      if (hasChanges) {
+        setIsSaving(true);
+        setPendingSave(true);
+        
+        // Start save in background
+        handleStepSave(step, formData, setErrors)
+          .then((result) => {
+            if (result.updatedData) {
+              setFormData(result.updatedData);
+            }
+            setHasChanges(false);
+            setPendingSave(false);
+            setIsSaving(false);
+          })
+          .catch((error) => {
+            console.error('Save error:', error);
+            toast({
+              title: "Warning",
+              description: "Changes are being saved in the background",
+              variant: "default"
+            });
+            setPendingSave(false);
+            setIsSaving(false);
+          });
+      }
+
+      // Move to next step immediately
+      setStep(prev => prev + 1);
+      setIsSubmitting(false);
+    } catch (error) {
+      console.error('Error in handleNext:', error);
+      setIsSubmitting(false);
+      setIsSaving(false);
     }
-  }
+  };
 
   const handleBack = () => {
     setShownAlerts(new Set())
@@ -639,632 +753,34 @@ export function TripPlannerWizard({ initialData, onBack }: TripPlannerWizardProp
     if (totalAllocated <= 100) return []
 
     return formData.expenses
-      .filter(expense => 
+      .filter(expense => (
         formData.selectedCategories.includes(expense.key) &&
         !expense.preBooked &&
-        ((expense.budgetType === 'percentage' && parseFloat(expense.budgetValue) > expense.defaultPercentage) ||
-         (expense.budgetType === 'absolute' && 
-          parseFloat(expense.budgetValue) > (parseFloat(formData.overallBudget) * expense.defaultPercentage / 100)))
-      )
+        (
+          (expense.budgetType === 'percentage' && parseFloat(expense.budgetValue) > expense.defaultPercentage) ||
+          (expense.budgetType === 'absolute' && parseFloat(expense.budgetValue) > (parseFloat(formData.overallBudget) * expense.defaultPercentage / 100))
+        )
+      ))
       .map(expense => ({
         name: expense.name,
         key: expense.key,
         current: expense.budgetType === 'percentage' 
           ? `${expense.budgetValue}%`
           : formatCurrency(parseFloat(expense.budgetValue)),
-        default: `${expense.defaultPercentage}%`
+        default: `${expense.defaultPercentage}%`,
       }))
-  }
-
-  const renderStep = () => {
-    switch (step) {
-      case 1:
-        return (
-          <>
-            <CardHeader>
-              <CardTitle>Name Your Trip</CardTitle>
-              <CardDescription>
-                Give your trip a memorable name
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <FormField
-                  id="name"
-                  label="Trip Name"
-                  value={formData.name}
-                  onChange={(value) => handleInputChange('name', value)}
-                  error={errors.name}
-                  required
-                />
-              </div>
-            </CardContent>
-          </>
-        )
-      case 2:
-        return (
-          <>
-            <CardHeader>
-              <CardTitle>Trip Details</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="country">Select your destination</Label>
-                <Combobox
-                  options={[...countries]}
-                  value={formData.country}
-                  onValueChange={(value) => {
-                    handleInputChange('country', value)
-                    setErrors(prev => ({ ...prev, country: '' }))
-                  }}
-                  placeholder="Select country"
-                  className={cn(
-                    errors.country ? 'border-red-500 ring-1 ring-red-500' : ''
-                  )}
-                  error={!!errors.country}
-                  emptyText="No countries found"
-                />
-                {errors.country && <p className="text-sm text-red-500">{errors.country}</p>}
-              </div>
-              <div className="space-y-2">
-                <Label>Select your travel dates</Label>
-                <div className="flex flex-col space-y-2">
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant={"outline"}
-                        className={cn(
-                          "w-full justify-start text-left font-normal",
-                          !formData.startDate && "text-muted-foreground",
-                          errors.dates ? 'border-red-500 ring-1 ring-red-500' : ''
-                        )}
-                      >
-                        <CalendarIcon className="mr-2 h-4 w-4" />
-                        {formData.startDate ? (
-                          format(formData.startDate, "PPP")
-                        ) : (
-                          <span>Start date</span>
-                        )}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0">
-                      <Calendar
-                        mode="single"
-                        selected={formData.startDate}
-                        onSelect={(date) => date && handleInputChange('startDate', date)}
-                        initialFocus
-                      />
-                    </PopoverContent>
-                  </Popover>
-
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant={"outline"}
-                        className={cn(
-                          "w-full justify-start text-left font-normal",
-                          !formData.endDate && "text-muted-foreground",
-                          errors.dates ? 'border-red-500 ring-1 ring-red-500' : ''
-                        )}
-                      >
-                        <CalendarIcon className="mr-2 h-4 w-4" />
-                        {formData.endDate ? (
-                          format(formData.endDate, "PPP")
-                        ) : (
-                          <span>End date</span>
-                        )}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0">
-                      <Calendar
-                        mode="single"
-                        selected={formData.endDate}
-                        onSelect={(date) => date && handleInputChange('endDate', date)}
-                        initialFocus
-                        disabled={(date) => 
-                          date < formData.startDate || 
-                          date < new Date()
-                        }
-                      />
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                {errors.dates && <p className="text-sm text-red-500">{errors.dates}</p>}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="travelers">Number of travelers</Label>
-                <Select
-                  value={formData.travelers}
-                  onValueChange={(value) => handleInputChange('travelers', value)}
-                >
-                  <SelectTrigger id="travelers">
-                    <SelectValue placeholder="Select number of travelers" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((num) => (
-                      <SelectItem key={num} value={num.toString()}>{num}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="currency">Select your budget currency</Label>
-                <Select
-                  value={formData.currency}
-                  onValueChange={(value) => handleInputChange('currency', value)}
-                >
-                  <SelectTrigger id="currency" className="w-full">
-                    <SelectValue placeholder="Select currency" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {currencies.map((currency) => (
-                      <SelectItem key={currency.code} value={currency.code}>
-                        {currency.code} - {currency.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="overallBudget">Overall Budget</Label>
-                <div className="relative">
-                  <Input
-                    id="overallBudget"
-                    type="number"
-                    placeholder="Enter your overall budget"
-                    value={formData.overallBudget}
-                    onChange={(e) => {
-                      const value = e.target.value.replace(/^0+/, '') || '0'
-                      handleInputChange('overallBudget', value)
-                    }}
-                    className={cn(
-                      "w-full pl-8",
-                      errors.budget ? 'border-2 border-red-500 focus:ring-red-500' : ''
-                    )}
-                    required
-                  />
-                  <div className="absolute inset-y-0 left-2 flex items-center pointer-events-none">
-                    <span className="text-muted-foreground">
-                      {currencies.find(c => c.code === formData.currency)?.symbol}
-                    </span>
-                  </div>
-                </div>
-                {errors.budget && (
-                  <p className="text-sm text-red-500">Budget is required</p>
-                )}
-              </div>
-            </CardContent>
-          </>
-        )
-      case 3:
-        return (
-          <>
-            <CardHeader>
-              <CardTitle>Select Expense Categories</CardTitle>
-              <CardDescription>
-                Select at least one expense category for your trip
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className={cn(
-                "space-y-4",
-                errors.categories ? 'p-4 border border-red-500 rounded-lg' : ''
-              )}>
-                {defaultExpenses.map((expense) => (
-                  <div key={expense.key} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={`category-${expense.key}`}
-                      checked={formData.selectedCategories.includes(expense.key)}
-                      onCheckedChange={(checked) => {
-                        const newSelectedCategories = checked
-                          ? [...formData.selectedCategories, expense.key]
-                          : formData.selectedCategories.filter(key => key !== expense.key)
-                        
-                        // Ensure at least one category is selected
-                        if (newSelectedCategories.length > 0) {
-                          handleCategorySelection(newSelectedCategories)
-                          setErrors(prev => ({ ...prev, categories: '' }))
-                        } else {
-                          setErrors(prev => ({ 
-                            ...prev, 
-                            categories: 'At least one category must be selected' 
-                          }))
-                        }
-                      }}
-                    />
-                    <Label 
-                      htmlFor={`category-${expense.key}`}
-                      className={cn(
-                        DEFAULT_CATEGORIES.includes(expense.key) && "font-medium"
-                      )}
-                    >
-                      {expense.name}
-                      {DEFAULT_CATEGORIES.includes(expense.key) && " (Recommended)"}
-                    </Label>
-                  </div>
-                ))}
-                {errors.categories && (
-                  <p className="text-sm text-red-500 mt-2">{errors.categories}</p>
-                )}
-              </div>
-            </CardContent>
-          </>
-        )
-      case 4:
-        return (
-          <>
-            <CardHeader>
-              <CardTitle>Expense Categories</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="flex items-center space-x-2 px-6 pb-2">
-                <Switch
-                  id="show-overspend-alerts"
-                  checked={showOverspendAlerts}
-                  onCheckedChange={setShowOverspendAlerts}
-                />
-                <Label htmlFor="show-overspend-alerts">
-                  Show alerts when budget is overspent
-                </Label>
-              </div>
-              {formData.expenses.filter(expense => formData.selectedCategories.includes(expense.key)).map((expense, filteredIndex) => {
-                const totalAllocated = calculateTotalPercentage()
-                const isOverspent = totalAllocated > 100 && (
-                  (expense.budgetType === 'percentage' && parseFloat(expense.budgetValue) > expense.defaultPercentage) ||
-                  (expense.budgetType === 'absolute' && 
-                   parseFloat(expense.budgetValue) > (parseFloat(formData.overallBudget) * expense.defaultPercentage / 100))
-                )
-                const categoryColor = chartConfig[expense.key as keyof typeof chartConfig].color
-
-                return (
-                  <div 
-                    key={expense.key} 
-                    className={cn(
-                      "space-y-4 p-4 border rounded-lg",
-                      isOverspent && "border-red-500 bg-red-50"
-                    )}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div 
-                          className="w-4 h-4 rounded-full border"
-                          style={{ backgroundColor: categoryColor }}
-                        />
-                        <Label 
-                          htmlFor={expense.key}
-                          className={cn(isOverspent && "text-red-600 font-medium")}
-                        >
-                          {expense.name}
-                          {isOverspent && (
-                            <span className="ml-2 text-sm">
-                              (Exceeds {expense.defaultPercentage}% default)
-                            </span>
-                          )}
-                        </Label>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Label htmlFor={`${expense.key}-prebooked`}>Pre-booked</Label>
-                        <Switch
-                          id={`${expense.key}-prebooked`}
-                          checked={expense.preBooked}
-                          onCheckedChange={(checked) => {
-                            handleExpenseChange(filteredIndex, 'preBooked', checked);
-                            if (checked) {
-                              handleExpenseChange(filteredIndex, 'budgetType', 'absolute');
-                            }
-                          }}
-                        />
-                      </div>
-                    </div>
-
-                    {expense.preBooked ? (
-                      <div className="space-y-2">
-                        <Label htmlFor={`${expense.key}-cost`}>Cost</Label>
-                        <div className="relative">
-                          <span className="absolute left-3 top-1/2 transform -translate-y-1/2">
-                            {currencies.find(c => c.code === formData.currency)?.symbol}
-                          </span>
-                          <Input
-                            id={`${expense.key}-cost`}
-                            type="number"
-                            placeholder={`Enter ${expense.name.toLowerCase()} cost`}
-                            value={expense.cost}
-                            onWheel={preventWheelChange}
-                            onChange={(e) => handleExpenseChange(filteredIndex, 'cost', e.target.value)}
-                            className="pl-8"
-                          />
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        {renderCostEstimate(expense.key as keyof ReturnType<typeof estimateCosts>)}
-                        <div className="space-y-2">
-                          <Tabs
-                            value={expense.budgetType}
-                            onValueChange={(value) => {
-                              const newType = value as 'percentage' | 'absolute'
-                              const currentValue = parseFloat(expense.budgetValue) || 0
-                              const overallBudget = parseFloat(formData.overallBudget) || 1 // Prevent division by zero
-                              
-                              let newValue: string
-                              
-                              if (newType === 'absolute') {
-                                // Converting from percentage to absolute
-                                newValue = ((currentValue / 100) * overallBudget).toFixed(2)
-                              } else {
-                                // Converting from absolute to percentage
-                                newValue = ((currentValue / overallBudget) * 100).toFixed(1)
-                              }
-
-                              // First update the budget type
-                              handleExpenseChange(filteredIndex, 'budgetType', newType)
-                              // Then update the value
-                              handleExpenseChange(filteredIndex, 'budgetValue', newValue)
-                            }}
-                            className="w-full"
-                          >
-                            <TabsList className="grid w-full grid-cols-2">
-                              <TabsTrigger value="percentage">Percentage</TabsTrigger>
-                              <TabsTrigger value="absolute">Absolute</TabsTrigger>
-                            </TabsList>
-                          </Tabs>
-
-                          <div className="space-y-2">
-                            <Label htmlFor={`${expense.key}-budgetValue`}>
-                              {expense.budgetType === 'percentage' ? 'Budget Percentage' : 'Budget Amount'}
-                            </Label>
-                            <div className="relative">
-                              {expense.budgetType === 'absolute' && (
-                                <span className="absolute left-3 top-1/2 transform -translate-y-1/2">
-                                  {currencies.find(c => c.code === formData.currency)?.symbol}
-                                </span>
-                              )}
-                              <Input
-                                id={`${expense.key}-budgetValue`}
-                                type="number"
-                                min="0"
-                                max={expense.budgetType === 'percentage' ? "100" : undefined}
-                                step={expense.budgetType === 'percentage' ? "0.1" : "0.01"}
-                                placeholder={expense.budgetType === 'percentage' ? 'Enter percentage' : 'Enter amount'}
-                                value={expense.budgetValue}
-                                onWheel={preventWheelChange}
-                                onFocus={() => {
-                                  setInputState({ isEditing: true, category: expense.key })
-                                  setShownAlerts(prev => {
-                                    const newSet = new Set(prev || [])
-                                    newSet.delete(expense.key)
-                                    return newSet
-                                  })
-                                }}
-                                onBlur={async () => {
-                                  await new Promise(resolve => setTimeout(resolve, 0))
-                                  setInputState({ isEditing: false, category: '' })
-                                  
-                                  if (showOverspendAlerts && !shownAlerts?.has(expense.key)) {
-                                    const totalPercentage = calculateTotalPercentage()
-                                    if (totalPercentage > 100) {
-                                      const overSpentCategories = getOverspentCategories()
-                                      if (overSpentCategories.some(cat => cat.key === expense.key)) {
-                                        setBudgetAlert({
-                                          show: true,
-                                          mode: 'initial',
-                                          message: `Budget is overspent (${totalPercentage.toFixed(1)}%). Would you like to adjust automatically or manually?`,
-                                          totalPercentage,
-                                          action: adjustPercentagesAutomatically
-                                        })
-                                        setShownAlerts(prev => {
-                                          const newSet = new Set(prev || [])
-                                          newSet.add(expense.key)
-                                          return newSet
-                                        })
-                                      }
-                                    }
-                                  }
-                                }}
-                                onChange={async (e) => {
-                                  const value = expense.budgetType === 'percentage' 
-                                    ? validatePercentageInput(e.target.value)
-                                    : e.target.value
-                                  
-                                  await handleExpenseChange(filteredIndex, 'budgetValue', value)
-                                }}
-                                className={expense.budgetType === 'absolute' ? 'pl-8' : ''}
-                              />
-                            </div>
-                            {expense.budgetType === 'percentage' && (
-                              <p className="text-sm text-gray-500">
-                                Amount: {formatCurrency(parseFloat(formData.overallBudget) * parseFloat(expense.budgetValue) / 100)}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )
-              })}
-              <div className="text-sm font-medium">
-                Remaining unallocated budget: {formatCurrency(calculateRemainingBudget())}
-              </div>
-              <BudgetChart />
-              <BudgetAlertDialog />
-            </CardContent>
-          </>
-        )
-      case 5:
-        const summaryData: CategorySummary[] = formData.expenses
-          .filter(expense => formData.selectedCategories.includes(expense.key))
-          .map(expense => ({
-            name: expense.name,
-            key: expense.key,
-            allocation: expense.budgetType === 'percentage' 
-              ? parseFloat(expense.budgetValue)
-              : calculateDefaultPercentage(parseFloat(expense.budgetValue)),
-            allocatedAmount: expense.budgetType === 'percentage'
-              ? parseFloat(formData.overallBudget) * parseFloat(expense.budgetValue) / 100
-              : parseFloat(expense.budgetValue),
-            defaultPercentage: expense.defaultPercentage,
-            estimatedAmount: calculateAverageEstimate(expense.key as keyof ReturnType<typeof estimateCosts>),
-            isPreBooked: expense.preBooked,
-            isTracked: globalTracking,
-            preBookedAmount: expense.preBooked ? parseFloat(expense.cost) : undefined
-          }))
-
-        return (
-          <>
-            <CardHeader>
-              <CardTitle>Trip Budget Summary</CardTitle>
-              <CardDescription>
-                {format(formData.startDate, "PPP")} - {format(formData.endDate, "PPP")} • {formData.travelers} traveler(s) • {formData.country}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-xl font-semibold">
-                    Total Budget: {formatCurrency(parseFloat(formData.overallBudget))}
-                  </h3>
-                  <p className="text-sm text-muted-foreground">
-                    In {currencies.find(c => c.code === formData.currency)?.name}
-                  </p>
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2">
-                    <Switch 
-                      checked={globalTracking}
-                      onCheckedChange={setGlobalTracking}
-                      id="tracking-toggle" 
-                    />
-                    <Label htmlFor="tracking-toggle">Enable Budget Tracking</Label>
-                  </div>
-                </div>
-              </div>
-
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[200px]">Category</TableHead>
-                    <TableHead>Allocation</TableHead>
-                    <TableHead className="text-right">Amount</TableHead>
-                    <TableHead className="text-right">Status</TableHead>
-                    <TableHead className="text-right">Track</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {summaryData.map((category) => {
-                    const categoryColor = chartConfig[category.key as keyof typeof chartConfig].color
-
-                    return (
-                      <TableRow key={category.key}>
-                        <TableCell className="font-medium">
-                          <div className="space-y-1">
-                            <div>{category.name}</div>
-                            <div className="text-xs text-muted-foreground">
-                              Estimated: {formatCurrency(category.estimatedAmount)}
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="space-y-2">
-                            <div className="flex items-center justify-between text-sm">
-                              <span>{category.allocation.toFixed(1)}%</span>
-                              <span className="text-muted-foreground">
-                                {category.allocation > category.defaultPercentage ? '↑' : 
-                                 category.allocation < category.defaultPercentage ? '↓' : '='}
-                                {category.defaultPercentage}%
-                              </span>
-                            </div>
-                            <Progress 
-                              value={category.allocation} 
-                              max={100}
-                              className="h-2"
-                              style={{
-                                backgroundColor: 'var(--muted)',
-                                ['--progress-background' as any]: categoryColor
-                              }}
-                            />
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="space-y-1">
-                            <div>{formatCurrency(category.allocatedAmount)}</div>
-                            {category.preBookedAmount && (
-                              <div className="text-xs text-muted-foreground">
-                                Pre-booked: {formatCurrency(category.preBookedAmount)}
-                              </div>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <span className={cn(
-                            "inline-flex items-center rounded-full px-2 py-1 text-xs font-medium",
-                            category.isPreBooked 
-                              ? "bg-green-50 text-green-700 ring-1 ring-inset ring-green-600/20"
-                              : "bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-600/20"
-                          )}>
-                            {category.isPreBooked ? 'Pre-booked' : 'Planned'}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Switch 
-                            checked={globalTracking && category.isTracked}
-                            disabled={!globalTracking}
-                            onCheckedChange={(checked) => {
-                              const updatedData = summaryData.map(item => 
-                                item.key === category.key 
-                                  ? { ...item, isTracked: checked }
-                                  : item
-                              )
-                              // Handle tracking state update
-                              console.log(`Tracking for ${category.name}: ${checked}`)
-                            }}
-                          />
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
-
-              <BudgetChart />
-
-              <div className="rounded-lg border p-4 space-y-2">
-                <h4 className="font-semibold">Budget Distribution Analysis</h4>
-                <div className="space-y-1 text-sm text-muted-foreground">
-                  {summaryData.map(category => (
-                    <div key={category.key} className="flex items-center justify-between">
-                      <span>{category.name}:</span>
-                      <span className={cn(
-                        category.allocation > category.defaultPercentage ? "text-yellow-600" :
-                        category.allocation < category.defaultPercentage ? "text-blue-600" :
-                        "text-green-600"
-                      )}>
-                        {category.allocation > category.defaultPercentage ? 'Above average' :
-                         category.allocation < category.defaultPercentage ? 'Below average' :
-                         'Average'} ({category.defaultPercentage}%)
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </CardContent>
-          </>
-        )
-      default:
-        return null
-    }
   }
 
   const BudgetChart = () => {
     const allocatedData = formData.expenses
       .filter(expense => formData.selectedCategories.includes(expense.key))
-      .map(expense => ({
-        category: expense.key,
-        name: expense.name,
-        value: expense.budgetType === 'percentage' 
-          ? parseFloat(expense.budgetValue) || 0
-          : calculateDefaultPercentage(parseFloat(expense.budgetValue) || 0)
-      }))
+        .map(expense => ({
+          category: expense.key,
+          name: expense.name,
+          value: expense.budgetType === 'percentage' 
+            ? parseFloat(expense.budgetValue) || 0
+            : calculateDefaultPercentage(parseFloat(expense.budgetValue) || 0)
+        }))
 
     const totalAllocated = allocatedData.reduce((sum, item) => sum + item.value, 0)
     const unallocatedPercentage = Math.max(0, 100 - totalAllocated)
@@ -1450,7 +966,7 @@ export function TripPlannerWizard({ initialData, onBack }: TripPlannerWizardProp
                 formData.selectedCategories.includes(expense.key) && 
                 !expense.preBooked
               )
-              .map((expense, index) => {
+              .map((expense: ExpenseData, index) => {
                 const absoluteValue = expense.budgetType === 'absolute' 
                   ? parseFloat(expense.budgetValue) || 0
                   : ((parseFloat(expense.budgetValue) || 0) * overallBudget / 100)
@@ -1548,50 +1064,465 @@ export function TripPlannerWizard({ initialData, onBack }: TripPlannerWizardProp
     }
   }
 
+  const renderStep = () => {
+    switch (step) {
+      case 1:
+        return (
+          <>
+            <CardHeader>
+              <CardTitle>Name Your Trip</CardTitle>
+              <CardDescription>
+                Give your trip a memorable name
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <FormField
+                  id="name"
+                  label="Trip Name"
+                  value={formData.name}
+                  onChange={(value) => handleInputChange('name', value)}
+                  error={errors.name ? { error: true, message: errors.name } : undefined}
+                  required
+                />
+              </div>
+            </CardContent>
+          </>
+        )
+      case 2:
+        return (
+          <>
+            <CardHeader>
+              <CardTitle>Trip Details</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="country">Select your destination</Label>
+                <Combobox
+                  options={[...countries]}
+                  value={formData.country}
+                  onValueChange={(value) => handleInputChange('country', value)}
+                  placeholder="Select country"
+                  className={getCurrencyTriggerClassName({ error: !!errors.country, message: errors.country })}
+                />
+                {errors.country && (
+                  <p className="text-sm text-red-500">{errors.country}</p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label>Select your travel dates</Label>
+                <div className="flex flex-col space-y-2">
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant={"outline"}
+                        className={getDatePickerClassName({ error: !!errors.dates, message: errors.dates }, !!formData.startDate)}
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {formData.startDate ? format(formData.startDate, "PPP") : <span>Start date</span>}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0">
+                      <Calendar
+                        mode="single"
+                        selected={formData.startDate}
+                        onSelect={(date) => date && handleInputChange('startDate', date)}
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant={"outline"}
+                        className={getDatePickerClassName({ error: !!errors.dates, message: errors.dates }, !!formData.endDate)}
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {formData.endDate ? format(formData.endDate, "PPP") : <span>End date</span>}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0">
+                      <Calendar
+                        mode="single"
+                        selected={formData.endDate}
+                        onSelect={(date) => date && handleInputChange('endDate', date)}
+                        initialFocus
+                        disabled={(date) => date < formData.startDate || date < new Date()}
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                {errors.dates && (
+                  <p className="text-sm text-red-500">{errors.dates}</p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="travelers">Number of travelers</Label>
+                <Select
+                  value={formData.travelers.toString()}
+                  onValueChange={(value) => handleInputChange('travelers', value)}
+                >
+                  <SelectTrigger 
+                    id="travelers"
+                    className={getCurrencyTriggerClassName({ error: !!errors.travelers, message: errors.travelers })}
+                  >
+                    <SelectValue placeholder="Select number of travelers">
+                      {formData.travelers ? `${formData.travelers} ${formData.travelers === '1' ? 'traveler' : 'travelers'}` : 'Select number of travelers'}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map((num) => (
+                      <SelectItem key={num} value={num.toString()}>
+                        {num} {num === 1 ? 'traveler' : 'travelers'}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {errors.travelers && (
+                  <p className="text-sm text-red-500">{errors.travelers}</p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="currency">Select your budget currency</Label>
+                <Select
+                  value={formData.currency}
+                  onValueChange={(value) => handleInputChange('currency', value)}
+                >
+                  <SelectTrigger 
+                    id="currency" 
+                    className={getCurrencyTriggerClassName({ error: !!errors.currency, message: errors.currency })}
+                  >
+                    <SelectValue placeholder="Select currency" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {currencies.map((currency) => (
+                      <SelectItem key={currency.code} value={currency.code}>
+                        {currency.code} - {currency.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {errors.currency && (
+                  <p className="text-sm text-red-500">{errors.currency}</p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="overallBudget">Overall Budget</Label>
+                <div className="relative">
+                  <Input
+                    id="overallBudget"
+                    type="number"
+                    placeholder="Enter your overall budget"
+                    value={formData.overallBudget}
+                    onChange={(e) => {
+                      const value = e.target.value.replace(/^0+/, '') || '0'
+                      handleInputChange('overallBudget', value)
+                    }}
+                    className={getBudgetInputClassName({ error: !!errors.budget, message: errors.budget })}
+                    required
+                  />
+                  <div className="absolute inset-y-0 left-2 flex items-center pointer-events-none">
+                    <span className="text-muted-foreground">
+                      {currencies.find(c => c.code === formData.currency)?.symbol}
+                    </span>
+                  </div>
+                </div>
+                {errors.budget && (
+                  <p className="text-sm text-red-500">{errors.budget}</p>
+                )}
+              </div>
+            </CardContent>
+          </>
+        )
+      case 3:
+        return (
+          <>
+            <CardHeader>
+              <CardTitle>Select Expense Categories</CardTitle>
+              
+            </CardHeader>
+            <CardContent>
+              <BudgetAllocation
+                selectedCategories={formData.selectedCategories || DEFAULT_CATEGORIES}
+                expenses={DEFAULT_EXPENSE_CATEGORIES.map(expense => ({
+                  ...expense,
+                  isExisting: formData.expenses?.some(e => e.key === expense.key && parseFloat(e.budgetValue) > 0)
+                }))}
+                onCategoryChange={handleCategorySelection}
+                errors={errors}
+              />
+            </CardContent>
+          </>
+        )
+      case 4:
+        return (
+          <>
+            <CardContent className="p-0">
+              <div className="w-full">
+                <BudgetAllocationPreview
+                  selectedCategories={formData.selectedCategories}
+                  expenses={formData.expenses}
+                  currency={formData.currency}
+                  overallBudget={parseFloat(formData.overallBudget)}
+                  onExpenseUpdate={handleExpenseUpdate}
+                  estimates={estimates}
+                />
+              </div>
+            </CardContent>
+          </>
+        )
+      case 5:
+        const summaryData: CategorySummary[] = formData.expenses
+          .filter((expense: ExpenseData) => formData.selectedCategories.includes(expense.key))
+            .map((expense: ExpenseData) => ({
+              name: expense.name,
+              key: expense.key,
+              allocation: expense.budgetType === 'percentage' 
+                ? parseFloat(expense.budgetValue)
+                : calculateDefaultPercentage(parseFloat(expense.budgetValue)),
+              allocatedAmount: expense.budgetType === 'percentage'
+                ? parseFloat(formData.overallBudget) * parseFloat(expense.budgetValue) / 100
+                : parseFloat(expense.budgetValue),
+              defaultPercentage: expense.defaultPercentage,
+              estimatedAmount: calculateAverageEstimate(expense.key as keyof ReturnType<typeof estimateCosts>),
+              isPreBooked: expense.preBooked,
+              isTracked: globalTracking,
+              preBookedAmount: expense.preBooked && expense.cost ? parseFloat(expense.cost) : undefined
+            }))
+
+        return (
+          <>
+            <CardHeader>
+              <CardTitle>Trip Budget Summary</CardTitle>
+              <CardDescription>
+                {format(formData.startDate, "PPP")} - {format(formData.endDate, "PPP")} • {formData.travelers} traveler(s) • {formData.country}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl font-semibold">
+                    Total Budget: {formatCurrency(parseFloat(formData.overallBudget))}
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    In {currencies.find(c => c.code === formData.currency)?.name}
+                  </p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <Switch 
+                      checked={globalTracking}
+                      onCheckedChange={setGlobalTracking}
+                      id="tracking-toggle" 
+                    />
+                    <Label htmlFor="tracking-toggle">Enable Budget Tracking</Label>
+                  </div>
+                </div>
+              </div>
+
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[200px]">Category</TableHead>
+                    <TableHead>Allocation</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead className="text-right">Status</TableHead>
+                    <TableHead className="text-right">Track</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {summaryData.map((category) => {
+                    const categoryColor = chartConfig[category.key as keyof typeof chartConfig].color
+
+                    return (
+                      <TableRow key={category.key}>
+                        <TableCell className="font-medium">
+                          <div className="space-y-1">
+                            <div>{category.name}</div>
+                            <div className="text-xs text-muted-foreground">
+                              Estimated: {formatCurrency(category.estimatedAmount)}
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between text-sm">
+                              <span>{category.allocation.toFixed(1)}%</span>
+                              <span className="text-muted-foreground">
+                                {category.allocation > category.defaultPercentage ? '↑' : 
+                                 category.allocation < category.defaultPercentage ? '↓' : '='}
+                                {category.defaultPercentage}%
+                              </span>
+                            </div>
+                            <Progress 
+                              value={category.allocation} 
+                              max={100}
+                              className="h-2"
+                              style={{
+                                backgroundColor: 'var(--muted)',
+                                ['--progress-background' as any]: categoryColor
+                              }}
+                            />
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="space-y-1">
+                            <div>{formatCurrency(category.allocatedAmount)}</div>
+                            {category.preBookedAmount && (
+                              <div className="text-xs text-muted-foreground">
+                                Pre-booked: {formatCurrency(category.preBookedAmount)}
+                              </div>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <span className={cn(
+                            "inline-flex items-center rounded-full px-2 py-1 text-xs font-medium",
+                            category.isPreBooked 
+                              ? "bg-green-50 text-green-700 ring-1 ring-inset ring-green-600/20"
+                              : "bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-600/20"
+                          )}>
+                            {category.isPreBooked ? 'Pre-booked' : 'Planned'}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Switch 
+                            checked={globalTracking && category.isTracked}
+                            disabled={!globalTracking}
+                            onCheckedChange={(checked) => {
+                              const updatedData = summaryData.map(item => 
+                                item.key === category.key 
+                                  ? { ...item, isTracked: checked }
+                                  : item
+                              )
+                              // Handle tracking state update
+                              console.log(`Tracking for ${category.name}: ${checked}`)
+                            }}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+
+              <BudgetChart />
+
+              <div className="rounded-lg border p-4 space-y-2">
+                <h4 className="font-semibold">Budget Distribution Analysis</h4>
+                <div className="space-y-1 text-sm text-muted-foreground">
+                  {summaryData.map(category => (
+                    <div key={category.key} className="flex items-center justify-between">
+                      <span>{category.name}:</span>
+                      <span className={cn(
+                        category.allocation > category.defaultPercentage ? "text-yellow-600" :
+                        category.allocation < category.defaultPercentage ? "text-blue-600" :
+                        "text-green-600"
+                      )}>
+                        {category.allocation > category.defaultPercentage ? 'Above average' :
+                         category.allocation < category.defaultPercentage ? 'Below average' :
+                         'Average'} ({category.defaultPercentage}%)
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </>
+        )
+      default:
+        return null
+    }
+  }
+
+  // Add saving indicator in the header
+  const renderSavingIndicator = () => {
+    if (isSaving || pendingSave) {
+      return (
+        <div className="flex items-center text-sm text-muted-foreground">
+          <Icons.loader className="mr-2 h-4 w-4 animate-spin" />
+          Saving changes...
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
-    <div className="space-y-4">
-      {initialData && onBack && (
-        <Button
-          variant="ghost"
-          onClick={onBack}
-          className="mb-4"
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Trip Details
-        </Button>
-      )}
-      <Card className="w-full max-w-2xl mx-auto shadow-sm">
+    <Card className="w-full shadow-sm mx-0 max-w-none rounded-lg">
+      <div className="flex items-center justify-between border-b p-6">
+        <div className="space-y-1">
+          <h2 className="text-2xl font-bold">
+            {formData.name || 'New Trip'}
+          </h2>
+          {step > 2 && formData.country && (
+            <div className="text-sm text-muted-foreground">
+              {formData.country}
+              {formData.startDate && formData.endDate && (
+                <span className="ml-2">
+                  • {format(formData.startDate, "MMM d")} - {format(formData.endDate, "MMM d, yyyy")}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-4">
+          {renderSavingIndicator()}
+          {initialData && (
+            <>
+              <Button variant="outline" onClick={onBack}>
+                Back to Trips
+              </Button>
+              <Button variant="outline" onClick={() => router.push('/trip-monitor')}>
+                Open Monitor
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div>
         {renderStep()}
-        <CardFooter className="flex justify-between border-t bg-muted/10 mt-6">
-          {step > 1 && (
+      </div>
+
+      <CardFooter className="flex justify-between border-t px-6 py-4 mt-auto">
+        <div className="flex w-full justify-between">
+          {step > 1 ? (
             <Button
               variant="outline"
               onClick={handleBack}
-              disabled={step === 1 || isSubmitting}
+              disabled={isSubmitting}
             >
               Back
             </Button>
+          ) : (
+            <div />
           )}
-          {step < STEPS.length && ( // Only show Next/Save button if not on the last step
-            <Button 
-              onClick={handleNext}
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? (
+          <Button 
+            onClick={handleNext}
+            disabled={isSubmitting || (step === 5 && (isSaving || pendingSave))}
+          >
+            {step === 5 ? (
+              isSaving || pendingSave ? (
                 <>
                   <Icons.loader className="mr-2 h-4 w-4 animate-spin" />
-                  Saving...
+                  Finishing...
                 </>
               ) : (
-                'Next'
-              )}
-            </Button>
-          )}
-        </CardFooter>
-        <BudgetAlertDialog />
-        <ManualAdjustmentDialog />
-      </Card>
-    </div>
-  )
+                'Complete'
+              )
+            ) : (
+              'Next'
+            )}
+          </Button>
+        </div>
+      </CardFooter>
+    </Card>
+  );
 }
 

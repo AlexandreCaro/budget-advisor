@@ -13,17 +13,17 @@ model Account {
   type              String
   provider          String
   providerAccountId String
-  refresh_token     String? @db.Text
-  access_token      String? @db.Text
+  refresh_token     String?
+  access_token      String?
   expires_at        Int?
   token_type        String?
   scope             String?
-  id_token          String? @db.Text
+  id_token          String?
   session_state     String?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
+  @@index([userId])
 }
 
 model Session {
@@ -32,61 +32,80 @@ model Session {
   userId       String
   expires      DateTime
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model User {
-  id            String     @id @default(cuid())
-  name          String?
-  email         String?    @unique
-  emailVerified DateTime?
-  image         String?
-  accounts      Account[]
-  sessions      Session[]
-  tripPlans     TripPlan[]
+  id              String           @id @default(cuid())
+  name            String?
+  email           String?          @unique
+  emailVerified   DateTime?
+  image           String?
+  accounts        Account[]
   bankConnections BankConnection[]
+  sessions        Session[]
+  tripPlans       TripPlan[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([email])
 }
 
 model TripPlan {
-  id            String    @id @default(cuid())
-  userId        String
-  name          String
-  status        TripStatus @default(DRAFT)
-  country       String?
-  startDate     DateTime?
-  endDate       DateTime?
-  travelers     Int?
-  currency      String?
-  overallBudget Float?
-  expenses      Expense[]
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                 String            @id @default(cuid())
+  userId             String
+  name               String
+  status             TripStatus        @default(DRAFT)
+  country            String?
+  startDate          DateTime?
+  endDate            DateTime?
+  travelers          Int               @default(1)
+  currency           String?
+  overallBudget      Float?
+  selectedCategories String[]          @default([])
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  expenses           ExpenseCategory[]
+  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
 }
 
-model Expense {
-  id               String   @id @default(cuid())
-  tripPlanId       String
-  name             String
-  key              String
-  preBooked        Boolean  @default(false)
-  cost             Float?
-  budgetType       String
-  budgetValue      Float
+model ExpenseCategory {
+  id                String    @id @default(cuid())
+  tripPlanId        String
+  name              String
+  key               String
+  preBooked         Boolean   @default(false)
+  cost              Float?
+  budgetType        String    // 'percentage' or 'absolute'
+  budgetValue       Float
   defaultPercentage Float
-  isTracked        Boolean  @default(true)
-  spent            Float    @default(0)
-  tripPlan         TripPlan @relation(fields: [tripPlanId], references: [id], onDelete: Cascade)
+  isTracked         Boolean   @default(true)
+  spent             Float     @default(0)
+  selectedTier      String    @default("medium")
+  estimates         Json?
+  dailySpending     Json?
+  transactions      Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  tripPlan          TripPlan  @relation(fields: [tripPlanId], references: [id], onDelete: Cascade)
+
+  @@unique([tripPlanId, key])
+  @@index([tripPlanId, key])
 }
 
 model BankConnection {
-  id            String   @id @default(cuid())
-  userId        String
-  accessToken   String
-  refreshToken  String
-  provider      String   @default("truelayer")
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  user          User     @relation(fields: [userId], references: [id])
+  id           String   @id @default(cuid())
+  userId       String
+  accessToken  String
+  refreshToken String
+  provider     String   @default("truelayer")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }

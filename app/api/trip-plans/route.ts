@@ -2,82 +2,74 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/prisma'
 import { authOptions } from '@/lib/auth'
+import { DEFAULT_EXPENSE_CATEGORIES } from '@/lib/cost-estimation/perplexity'
 
-export async function POST(request: Request) {
+export async function POST(req: Request) {
   try {
-    console.log('POST /api/trip-plans called')
-    const session = await getServerSession(authOptions)
-    console.log('Session data:', session)
-    
-    if (!session?.user?.email) {
-      console.log('No user email in session')
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    console.log('=== POST /api/trip-plans ===');
+    const session = await getServerSession(authOptions);
+    console.log('Session:', session);
+
+    if (!session?.user?.id) {
+      console.error('No user session found');
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const data = await request.json()
-    console.log('Received trip plan data:', data)
-    console.log('Selected categories:', data.expenses)
+    const body = await req.json();
+    console.log('Request body:', body);
 
-    // First, find or create the user
-    const user = await prisma.user.upsert({
-      where: {
-        email: session.user.email,
-      },
-      create: {
-        email: session.user.email,
-        name: session.user.name || null,
-      },
-      update: {},
-    })
+    try {
+      const tripPlan = await prisma.$transaction(async (tx) => {
+        // Create trip plan
+        const plan = await tx.tripPlan.create({
+          data: {
+            userId: session.user.id,
+            name: body.name || 'Untitled Trip',
+            status: 'DRAFT',
+            selectedCategories: [],
+            startDate: new Date(),
+            endDate: new Date(),
+            travelers: 1,
+            currency: 'USD',
+            overallBudget: 0
+          }
+        });
 
-    console.log('User found/created:', user)
+        // Create default expenses
+        await tx.expenseCategory.createMany({
+          data: DEFAULT_EXPENSE_CATEGORIES.map(category => ({
+            tripPlanId: plan.id,
+            name: category.name,
+            key: category.key,
+            preBooked: false,
+            cost: null,
+            budgetType: 'percentage',
+            budgetValue: category.defaultPercentage,
+            defaultPercentage: category.defaultPercentage,
+            isTracked: true,
+            spent: 0
+          }))
+        });
 
-    // Validate required fields
-    if (!data.name) {
-      return NextResponse.json({ error: 'Name is required' }, { status: 400 })
+        // Return complete trip plan with expenses
+        return tx.tripPlan.findUnique({
+          where: { id: plan.id },
+          include: { expenses: true }
+        });
+      });
+
+      console.log('Created trip plan:', tripPlan);
+      return NextResponse.json(tripPlan);
+    } catch (dbError) {
+      console.error('Database error:', dbError);
+      throw dbError;
     }
-
-    // Create initial trip plan with name and expenses
-    const tripPlan = await prisma.tripPlan.create({
-      data: {
-        userId: user.id,
-        name: data.name,
-        status: 'DRAFT',
-        country: data.country || '',
-        startDate: data.startDate ? new Date(data.startDate) : new Date(),
-        endDate: data.endDate ? new Date(data.endDate) : new Date(),
-        travelers: data.travelers ? parseInt(data.travelers) : 1,
-        currency: data.currency || 'USD',
-        overallBudget: data.overallBudget ? parseFloat(data.overallBudget) : 0,
-        expenses: {
-          create: data.selectedCategories?.map(categoryKey => {
-            const expense = data.expenses.find(e => e.key === categoryKey)
-            return {
-              name: expense.name,
-              key: expense.key,
-              preBooked: expense.preBooked || false,
-              cost: expense.cost ? parseFloat(expense.cost) : null,
-              budgetType: expense.budgetType || 'percentage',
-              budgetValue: parseFloat(expense.budgetValue) || 0,
-              defaultPercentage: expense.defaultPercentage || 0,
-              isTracked: expense.isTracked || true,
-            }
-          }) || [],
-        },
-      },
-      include: {
-        expenses: true,
-      },
-    })
-
-    console.log('Created trip plan with expenses:', tripPlan)
-    return NextResponse.json(tripPlan)
   } catch (error) {
-    console.error('Error in trip-plans POST:', error)
+    console.error('Error creating trip plan:', error);
     return NextResponse.json(
-      { error: 'Failed to create trip plan', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: 'Failed to create trip plan', details: error },
       { status: 500 }
-    )
+    );
   }
 }
 
@@ -89,7 +81,13 @@ export async function PATCH(request: Request) {
     }
 
     const data = await request.json()
-    const { id, ...updateData } = data
+    const { id, selectedCategories, ...updateData } = data
+
+    console.log('Updating trip plan:', {
+      id,
+      selectedCategories,
+      updateData
+    });
 
     // Find user by email
     const user = await prisma.user.findUnique({
@@ -114,17 +112,27 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Trip plan not found' }, { status: 404 })
     }
 
-    // Update trip plan
+    // Update trip plan with selectedCategories
     const updatedPlan = await prisma.tripPlan.update({
       where: { id },
       data: {
         ...updateData,
+        selectedCategories: selectedCategories || existingPlan.selectedCategories,
         startDate: updateData.startDate ? new Date(updateData.startDate) : undefined,
         endDate: updateData.endDate ? new Date(updateData.endDate) : undefined,
         travelers: updateData.travelers ? parseInt(updateData.travelers.toString()) : undefined,
         overallBudget: updateData.overallBudget ? parseFloat(updateData.overallBudget.toString()) : undefined,
       },
+      include: {
+        expenses: true,
+      }
     })
+
+    console.log('Updated trip plan:', {
+      id: updatedPlan.id,
+      selectedCategories: updatedPlan.selectedCategories,
+      expensesCount: updatedPlan.expenses.length
+    });
 
     return NextResponse.json(updatedPlan)
   } catch (error) {
@@ -136,49 +144,49 @@ export async function PATCH(request: Request) {
   }
 }
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user?.email) {
-      console.log('No session found in trip-plans GET')
+
+    if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Find user by email
-    const user = await prisma.user.findUnique({
+    console.log('Fetching trips for user:', session.user.id)
+
+    const trips = await prisma.tripPlan.findMany({
       where: {
-        email: session.user.email,
+        userId: session.user.id
       },
-    })
-
-    if (!user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 })
-    }
-
-    console.log('Fetching trip plans for user:', user.id)
-
-    const tripPlans = await prisma.tripPlan.findMany({
-      where: {
-        userId: user.id,
-      },
-      include: {
-        expenses: true,
+      select: {
+        id: true,
+        name: true,
+        country: true,
+        startDate: true,
+        endDate: true,
+        currency: true,
+        overallBudget: true,
+        selectedCategories: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true
       },
       orderBy: {
-        startDate: 'desc',
-      },
+        createdAt: 'desc'
+      }
     })
 
-    console.log('Found trip plans:', {
-      count: tripPlans.length,
-      tripPlanIds: tripPlans.map(plan => plan.id)
-    })
+    console.log('Found trips:', trips.map(t => ({
+      id: t.id,
+      name: t.name,
+      status: t.status
+    })))
 
-    return NextResponse.json(tripPlans)
+    return NextResponse.json(trips)
   } catch (error) {
-    console.error('Error in trip-plans GET:', error)
+    console.error('Error in GET /api/trip-plans:', error)
     return NextResponse.json(
-      { error: 'Failed to fetch trip plans' },
+      { error: 'Failed to fetch trips', details: error },
       { status: 500 }
     )
   }

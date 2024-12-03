@@ -20,6 +20,9 @@ import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, A
 import { Badge } from "@/components/ui/badge"
 import { format } from "date-fns"
 import { Switch } from "@/components/ui/switch"
+import { BudgetAllocationPreview } from "@/components/trip-planner/budget-allocation-preview"
+import { TripPlannerWizard } from "@/components/TripPlannerWizard"
+import { useRouter } from 'next/navigation'
 
 interface TripDashboardProps {
   trip: TripPlan
@@ -39,8 +42,12 @@ const categoryColors = {
 
 export function TripDashboard({ trip, onBack, onDelete }: TripDashboardProps) {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [showBudgetEditor, setShowBudgetEditor] = useState(false)
+  const router = useRouter()
 
-  const totalSpent = trip.expenses.reduce((acc, exp) => acc + exp.spent, 0)
+  const expenses = trip.expenses || []
+
+  const totalSpent = expenses.reduce((acc, exp) => acc + (exp.spent || 0), 0)
   const spendingPercentage = (totalSpent / (trip.overallBudget ?? 0)) * 100
   const isOverspent = spendingPercentage > 100
 
@@ -53,11 +60,11 @@ export function TripDashboard({ trip, onBack, onDelete }: TripDashboardProps) {
   ]
 
   // Example category spending data
-  const categoryData = trip.expenses.map(expense => ({
+  const categoryData = expenses.map(expense => ({
     name: expense.name,
-    budget: (trip.overallBudget ?? 0) * (expense.budgetValue / 100),
-    spent: expense.spent,
-    remaining: (trip.overallBudget ?? 0) * (expense.budgetValue / 100) - expense.spent,
+    budget: (trip.overallBudget ?? 0) * ((expense.budgetValue || 0) / 100),
+    spent: expense.spent || 0,
+    remaining: (trip.overallBudget ?? 0) * ((expense.budgetValue || 0) / 100) - (expense.spent || 0),
   }))
 
   // Add proper tracking handlers
@@ -75,25 +82,98 @@ export function TripDashboard({ trip, onBack, onDelete }: TripDashboardProps) {
     }
   }
 
-  const handleEditBudget = async (categoryKey: string) => {
-    // Add your budget editing logic here
+  // Add handler for expense updates
+  const handleExpenseUpdate = async (key: string, updates: Partial<TripExpenseCategory>) => {
+    try {
+      const response = await fetch(`/api/trip-plans/${trip.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          expenses: trip.expenses.map(expense => 
+            expense.key === key 
+              ? { ...expense, ...updates }
+              : expense
+          )
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update expense');
+      }
+
+      // Refresh trip data after update
+      // You might want to add a callback to refresh the parent component
+    } catch (error) {
+      console.error('Error updating expense:', error);
+    }
+  };
+
+  // Modify the handleEditBudget function
+  const handleEditBudget = () => {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={onBack}>
+                Back to Trips
+              </Button>
+              <Button variant="outline" onClick={() => router.push('/trip-monitor')}>
+                Open Monitor
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <BudgetAllocationPreview
+          selectedCategories={trip.selectedCategories}
+          expenses={trip.expenses}
+          currency={trip.currency}
+          overallBudget={trip.overallBudget}
+          onExpenseUpdate={handleExpenseUpdate}
+        />
+      </div>
+    );
+  };
+
+  // When Edit Budget button is clicked, show step 4 of TripPlannerWizard
+  if (showBudgetEditor) {
+    return (
+      <TripPlannerWizard
+        initialData={{
+          ...trip,
+          step: 4 // Force wizard to start at step 4
+        }}
+        onBack={() => setShowBudgetEditor(false)}
+      />
+    );
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" onClick={onBack}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Trips
-          </Button>
+          <div className="flex gap-2">
+            <Button 
+              variant="outline" 
+              onClick={onBack}
+            >
+              Back to Dashboard
+            </Button>
+            <Button 
+              variant="outline"
+              onClick={() => setShowBudgetEditor(true)}
+            >
+              Edit Allocation
+            </Button>
+          </div>
           <div>
             <h2 className="text-2xl font-bold">{trip.name}</h2>
             <p className="text-muted-foreground">{trip.country}</p>
           </div>
         </div>
         <Button 
-          variant="destructive" 
+          variant="outline"
           onClick={() => setShowDeleteDialog(true)}
         >
           Delete Trip
@@ -187,10 +267,15 @@ export function TripDashboard({ trip, onBack, onDelete }: TripDashboardProps) {
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Budget Category Breakdown</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle>Budget Category Breakdown</CardTitle>
+              <Button onClick={() => setShowBudgetEditor(true)}>
+                Edit Budget Allocation
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="space-y-6">
-            {trip.expenses.map((expense) => (
+            {expenses.map((expense) => (
               <div key={expense.key} className="space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -212,13 +297,13 @@ export function TripDashboard({ trip, onBack, onDelete }: TripDashboardProps) {
                 </div>
                 <div className="space-y-1">
                   <div className="flex justify-between text-sm">
-                    <span>Budget: {trip.currency} {((trip.overallBudget ?? 0) * expense.budgetValue / 100).toLocaleString()}</span>
-                    <span>{expense.budgetValue}%</span>
+                    <span>Budget: {trip.currency} {((trip.overallBudget ?? 0) * (expense.budgetValue || 0) / 100).toLocaleString()}</span>
+                    <span>{expense.budgetValue || 0}%</span>
                   </div>
-                  <Progress value={(expense.spent / ((trip.overallBudget ?? 0) * expense.budgetValue / 100)) * 100} />
+                  <Progress value={((expense.spent || 0) / ((trip.overallBudget ?? 0) * (expense.budgetValue || 0) / 100)) * 100} />
                   <div className="flex justify-between text-sm text-muted-foreground">
-                    <span>Spent: {trip.currency} {expense.spent.toLocaleString()}</span>
-                    <span>{((expense.spent / ((trip.overallBudget ?? 0) * expense.budgetValue / 100)) * 100).toFixed(1)}%</span>
+                    <span>Spent: {trip.currency} {(expense.spent || 0).toLocaleString()}</span>
+                    <span>{(((expense.spent || 0) / ((trip.overallBudget ?? 0) * (expense.budgetValue || 0) / 100)) * 100).toFixed(1)}%</span>
                   </div>
                 </div>
               </div>

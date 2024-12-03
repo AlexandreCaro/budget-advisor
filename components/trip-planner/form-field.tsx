@@ -1,44 +1,42 @@
-import { cn } from "@/lib/utils"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
+import { cn } from "@/lib/utils"
+import { FieldState } from "./form-validation"
 
 interface FormFieldProps {
   id: string
   label: string
-  error?: string
-  type?: string
   value: string
   onChange: (value: string) => void
-  className?: string
+  error?: FieldState | null
   required?: boolean
+  type?: string
 }
 
 export function FormField({
   id,
   label,
-  error,
-  type = "text",
   value,
   onChange,
-  className,
-  required
+  error,
+  required = false,
+  type = "text"
 }: FormFieldProps) {
   return (
     <div className="space-y-2">
-      <Label htmlFor={id}>{label}</Label>
+      <Label htmlFor={id}>
+        {label}
+        {required && <span className="text-red-500 ml-1">*</span>}
+      </Label>
       <Input
         id={id}
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className={cn(
-          className,
-          error ? 'border-2 border-red-500 focus:ring-red-500' : ''
-        )}
-        required={required}
+        className={cn(error?.className)}
       />
-      {error && (
-        <p className="text-sm text-red-500">{error}</p>
+      {error?.message && (
+        <p className="text-sm text-red-500">{error.message}</p>
       )}
     </div>
   )

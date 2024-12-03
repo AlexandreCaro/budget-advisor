@@ -24,19 +24,34 @@ export default function TripMonitorPage() {
 
   useEffect(() => {
     const fetchTrips = async () => {
-      try {
-        const response = await fetch('/api/trip-plans')
-        const data = await response.json()
-        setTrips(data)
-      } catch (error) {
-        console.error('Error fetching trips:', error)
-      } finally {
-        setLoading(false)
-      }
-    }
+      if (!session?.user?.id) return;
 
-    fetchTrips()
-  }, [])
+      try {
+        console.log('Fetching trips...');
+        const response = await fetch('/api/trip-plans', {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log('Fetched trips:', data);
+        setTrips(data);
+      } catch (error) {
+        console.error('Error fetching trips:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (session?.user?.id) {
+      fetchTrips();
+    }
+  }, [session?.user?.id]);
 
   useEffect(() => {
     const tripId = new URLSearchParams(window.location.search).get('id')
@@ -51,9 +66,9 @@ export default function TripMonitorPage() {
 
   useEffect(() => {
     if (selectedTrip) {
-      router.push(`/trip-monitor?id=${selectedTrip.id}`, { shallow: true })
+      router.push(`/trip-monitor?id=${selectedTrip.id}`)
     } else {
-      router.push('/trip-monitor', { shallow: true })
+      router.push('/trip-monitor')
     }
   }, [selectedTrip, router])
 
@@ -130,10 +145,14 @@ export default function TripMonitorPage() {
     )
   }
 
-  return <TripsTable 
-    trips={trips} 
-    onViewTrip={handleViewTrip} 
-    onEditTrip={handleEditTrip} 
-    onDeleteTrip={handleDeleteTrip}
-  />
+  return (
+    <div className="container mx-auto py-6">
+      <TripsTable 
+        trips={trips} 
+        onViewTrip={handleViewTrip} 
+        onEditTrip={handleEditTrip} 
+        onDeleteTrip={handleDeleteTrip}
+      />
+    </div>
+  )
 } 
