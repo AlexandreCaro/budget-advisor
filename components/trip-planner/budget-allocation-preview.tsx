@@ -448,58 +448,96 @@ const isValidExpensesArray = (expenses: any): expenses is TripExpenseCategory[] 
   );
 };
 
-// Add estimate validation function
+// Add this function to format flight references
+const formatFlightReference = (reference: string) => {
+  // Check if it's a booking link
+  if (reference.toLowerCase().includes('http')) {
+    return reference;
+  }
+
+  // Parse airline and route information
+  const [airline, route] = reference.split(': ');
+  if (!airline || !route) return reference;
+
+  // Format nicely
+  return `${airline}: ${route}`;
+};
+
+// Update the validateEstimate function to handle flight references
 function validateEstimate(estimate: any, category?: string): boolean {
-  if (!estimate || typeof estimate !== 'object') return false;
+  if (!estimate || typeof estimate !== 'object') {
+    console.log('[Budget Preview] Invalid estimate structure:', { estimate });
+    return false;
+  }
   
   const requiredTiers = ['budget', 'medium', 'premium'];
-  const requiredFields = ['min', 'max', 'average', 'confidence', 'source'];
+  const requiredFields = ['min', 'max', 'average', 'confidence', 'source', 'references'];
   
-  // For flight category, ensure we have non-zero values
+  // For flight category, ensure we have non-zero values and proper references
   if (category === 'flight') {
-    return requiredTiers.every(tier => {
+    const isValid = requiredTiers.every(tier => {
       const tierData = estimate[tier];
-      if (!tierData || typeof tierData !== 'object') return false;
-      return requiredFields.every(field => {
+      if (!tierData || typeof tierData !== 'object') {
+        console.log(`[Budget Preview] Missing or invalid tier data for ${category}:`, { tier, tierData });
+        return false;
+      }
+      
+      // Check all required fields
+      const hasAllFields = requiredFields.every(field => {
         const value = tierData[field];
         if (field === 'source') return typeof value === 'string';
         if (field === 'confidence') return typeof value === 'number' && value >= 0 && value <= 1;
+        if (field === 'references') return Array.isArray(value) && value.length > 0;
         // For flight costs, ensure values are non-zero
         if (['min', 'max', 'average'].includes(field)) {
-          return typeof value === 'number' && !isNaN(value) && value > 0;
+          const isValid = typeof value === 'number' && !isNaN(value) && value > 0;
+          if (!isValid) {
+            console.log(`[Budget Preview] Invalid ${field} value for ${category}:`, { value });
+          }
+          return isValid;
         }
         return typeof value === 'number' && !isNaN(value);
       });
+
+      // Validate references format for flights
+      const hasValidReferences = tierData.references.every((ref: string) => {
+        return typeof ref === 'string' && (
+          ref.includes(': ') || // Airline: Route format
+          ref.toLowerCase().includes('http') // Booking link
+        );
+      });
+
+      return hasAllFields && hasValidReferences;
     });
+
+    if (!isValid) {
+      console.log(`[Budget Preview] Flight estimate validation failed for ${category}:`, { estimate });
+    }
+    return isValid;
   }
   
   // For other categories
   return requiredTiers.every(tier => {
     const tierData = estimate[tier];
-    if (!tierData || typeof tierData !== 'object') return false;
+    if (!tierData || typeof tierData !== 'object') {
+      console.log(`[Budget Preview] Missing or invalid tier data for ${category}:`, { tier, tierData });
+      return false;
+    }
     return requiredFields.every(field => {
       const value = tierData[field];
       if (field === 'source') return typeof value === 'string';
       if (field === 'confidence') return typeof value === 'number' && value >= 0 && value <= 1;
-      return typeof value === 'number' && !isNaN(value);
+      if (field === 'references') return Array.isArray(value);
+      const isValid = typeof value === 'number' && !isNaN(value);
+      if (!isValid) {
+        console.log(`[Budget Preview] Invalid ${field} value for ${category}:`, { value });
+      }
+      return isValid;
     });
   });
 }
 
-// Update the EstimatesSection component to handle loading states
-interface EstimatesSectionProps {
-  expense: ExpenseData;
-  estimates: CategoryEstimates | null;
-  onRefresh: (key: string) => void;
-  onTierChange: (tier: string, budgetValue: number) => void;
-  currency: string;
-  isLoading: boolean;
-  loadingCategories: Record<string, boolean>;
-  overallBudget: number;
-  country: string;
-  tripId: string;
-}
-
+// Update the EstimatesSection component to handle flight references
 const EstimatesSection = ({ 
   expense,
   estimates,
@@ -514,11 +552,29 @@ const EstimatesSection = ({
 }: EstimatesSectionProps) => {
   const [showReferenceModal, setShowReferenceModal] = useState(false);
 
+  // Add debug logging
+  useEffect(() => {
+    console.log(`[EstimatesSection] Rendering for ${expense.key}:`, {
+      hasEstimates: !!estimates,
+      estimateKeys: estimates ? Object.keys(estimates) : [],
+      selectedTier: expense.selectedTier,
+      isLoading,
+      references: estimates?.[expense.selectedTier || 'budget']?.references
+    });
+  }, [expense.key, estimates, expense.selectedTier, isLoading]);
+
   if (isLoading) {
     return <EstimatesLoadingState />;
   }
 
-  if (!estimates) {
+  // Check if estimates exist and have the required structure
+  const hasValidEstimates = estimates && 
+    ['budget', 'medium', 'premium'].some(tier => 
+      estimates[tier] && typeof estimates[tier] === 'object' && 
+      'average' in estimates[tier] && 'min' in estimates[tier] && 'max' in estimates[tier]
+    );
+
+  if (!hasValidEstimates) {
     return (
       <div className="mt-4 p-4 border rounded-lg bg-muted/10">
         <div className="flex items-center justify-between">
@@ -529,7 +585,10 @@ const EstimatesSection = ({
             onClick={() => onRefresh(expense.key)}
             disabled={loadingCategories[expense.key]}
           >
-            <RefreshCw className="h-4 w-4 mr-2" />
+            <RefreshCw className={cn(
+              "h-4 w-4 mr-2",
+              loadingCategories[expense.key] && "animate-spin"
+            )} />
             Get Estimates
           </Button>
         </div>
@@ -542,20 +601,32 @@ const EstimatesSection = ({
 
   const handleTierSelect = (tier: string) => {
     const estimate = estimates[tier];
-    if (!estimate) return;
+    if (!estimate) {
+      console.warn(`[EstimatesSection] No estimate found for tier ${tier}`);
+      return;
+    }
 
     const estimatedValue = estimate.average || 0;
     const budgetValue = (estimatedValue / overallBudget) * 100;
 
-    console.log(`[Budget Preview] Tier selected for ${expense.key}:`, {
+    console.log(`[EstimatesSection] Tier selected for ${expense.key}:`, {
       tier,
       estimatedValue,
-      budgetValue
+      budgetValue,
+      estimate
     });
 
     if (estimatedValue > 0) {
       onTierChange(tier, budgetValue);
     }
+  };
+
+  // Format the unit label based on category
+  const getUnitLabel = () => {
+    if (expense.key === 'flight') {
+      return 'per person (round-trip)';
+    }
+    return expense.key === 'accommodation' ? 'per night' : 'per day';
   };
 
   return (
@@ -602,9 +673,28 @@ const EstimatesSection = ({
               <span>{((estimates[selectedTier].confidence || 0) * 100).toFixed(0)}%</span>
             </div>
             <div className="text-xs text-muted-foreground text-right">
-              {getUnitLabel(expense.key)}
+              {getUnitLabel()}
             </div>
           </div>
+
+          {/* Reference preview */}
+          {estimates[selectedTier].references?.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-sm font-medium">Available Options:</div>
+              <div className="space-y-2">
+                {estimates[selectedTier].references.slice(0, 2).map((ref: string, index: number) => (
+                  <div key={index} className="text-sm text-muted-foreground">
+                    {expense.key === 'flight' ? formatFlightReference(ref) : ref}
+                  </div>
+                ))}
+                {estimates[selectedTier].references.length > 2 && (
+                  <div className="text-sm text-muted-foreground">
+                    And {estimates[selectedTier].references.length - 2} more options...
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Reference button */}
           <Button
@@ -614,7 +704,7 @@ const EstimatesSection = ({
             onClick={() => setShowReferenceModal(true)}
           >
             <ExternalLink className="h-4 w-4 mr-2" />
-            View Reference Options
+            View All Options
           </Button>
         </div>
       )}
@@ -1243,13 +1333,11 @@ export const BudgetAllocationPreview = forwardRef<
     setEstimateError(null);
     
     try {
-      // Check if we already have valid estimates for all categories
-      const hasValidEstimates = effectiveCategories.every(category => {
-        const estimate = partialEstimates?.[category.toLowerCase()];
-        return estimate && validateEstimate(estimate, category);
-      });
-
-      if (hasValidEstimates) {
+      // If we already have estimates from props, use them
+      if (props.estimates && Object.keys(props.estimates).length > 0) {
+        console.log('[Budget Preview] Using estimates from props:', props.estimates);
+        setPartialEstimates(props.estimates);
+        setIsLoadingEstimates(false);
         return;
       }
 
@@ -1260,85 +1348,36 @@ export const BudgetAllocationPreview = forwardRef<
       }
       
       const savedEstimates = await response.json();
+      console.log('[Budget Preview] Loaded saved estimates:', savedEstimates);
       
-      // Check historical data for flight estimates
-      let mergedEstimates = { ...savedEstimates.estimates };
-      
-      if (effectiveCategories.includes('flight')) {
-        try {
-          const historyResponse = await fetch(`/api/estimates/history?category=flight&days=30`);
-          if (historyResponse.ok) {
-            const historyData = await historyResponse.json();
-            
-            // If we have historical flight data and current flight estimates are missing or zero
-            if (historyData.estimates?.length > 0 && 
-                (!mergedEstimates.flight || 
-                 !mergedEstimates.flight.budget?.average || 
-                 !mergedEstimates.flight.medium?.average || 
-                 !mergedEstimates.flight.premium?.average)) {
-              
-              // Get the most recent historical estimate
-              const latestFlightEstimate = historyData.estimates[0];
-              
-              mergedEstimates.flight = {
-                budget: {
-                  min: latestFlightEstimate.minCost,
-                  max: latestFlightEstimate.maxCost,
-                  average: latestFlightEstimate.avgCost,
-                  confidence: latestFlightEstimate.confidence,
-                  source: latestFlightEstimate.source,
-                  references: []
-                },
-                medium: {
-                  min: latestFlightEstimate.minCost * 1.5,
-                  max: latestFlightEstimate.maxCost * 1.5,
-                  average: latestFlightEstimate.avgCost * 1.5,
-                  confidence: latestFlightEstimate.confidence,
-                  source: latestFlightEstimate.source,
-                  references: []
-                },
-                premium: {
-                  min: latestFlightEstimate.minCost * 2.5,
-                  max: latestFlightEstimate.maxCost * 2.5,
-                  average: latestFlightEstimate.avgCost * 2.5,
-                  confidence: latestFlightEstimate.confidence,
-                  source: latestFlightEstimate.source,
-                  references: []
-                }
-              };
-            }
-          }
-        } catch (error) {
-          console.error('Error fetching flight history:', error);
-        }
-      }
-
-      // Validate merged estimates
-      const hasValidMergedEstimates = mergedEstimates && 
-        Object.keys(mergedEstimates).length > 0 &&
-        effectiveCategories.every(category => {
-          const estimate = mergedEstimates[category.toLowerCase()];
-          return estimate && validateEstimate(estimate, category);
-        });
-
-      if (hasValidMergedEstimates) {
-        console.log('Using merged estimates:', mergedEstimates);
-        setPartialEstimates(mergedEstimates);
+      if (savedEstimates.estimates && Object.keys(savedEstimates.estimates).length > 0) {
+        setPartialEstimates(savedEstimates.estimates);
         if (props.onEstimatesUpdate) {
-          props.onEstimatesUpdate(mergedEstimates);
+          props.onEstimatesUpdate(savedEstimates.estimates);
         }
+        setIsLoadingEstimates(false);
         return;
       }
 
       // If no valid saved estimates, fetch new ones
       await fetchPerplexityEstimates();
     } catch (error) {
-      console.error('Error loading estimates:', error);
+      console.error('[Budget Preview] Error loading estimates:', error);
       setEstimateError(error instanceof Error ? error.message : 'Failed to load estimates');
     } finally {
       setIsLoadingEstimates(false);
     }
   };
+
+  // Update useEffect to load estimates on mount and when categories change
+  useEffect(() => {
+    if (!props.tripId || !effectiveCategories?.length) {
+      return;
+    }
+
+    console.log('[Budget Preview] Loading estimates for categories:', effectiveCategories);
+    loadEstimates();
+  }, [props.tripId, effectiveCategories]);
 
   // Update fetchPerplexityEstimates function
   const fetchPerplexityEstimates = async () => {
@@ -1413,24 +1452,6 @@ export const BudgetAllocationPreview = forwardRef<
       throw error;
     }
   };
-
-  // Update useEffect to prevent unnecessary estimate fetches
-  useEffect(() => {
-    if (!props.tripId || !effectiveCategories?.length) {
-      return;
-    }
-
-    const hasChangedCategories = !partialEstimates || 
-      effectiveCategories.some(category => {
-        const estimate = partialEstimates[category.toLowerCase()];
-        return !estimate || !validateEstimate(estimate, category);
-      });
-
-    if (hasChangedCategories) {
-      debugEstimateStorage();
-      loadEstimates();
-    }
-  }, [props.tripId, effectiveCategories]);
 
   // Update the handleInputChange function
   const handleInputChange = (expenseKey: string, value: string, type: 'amount' | 'percent') => {
