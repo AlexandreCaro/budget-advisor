@@ -5,8 +5,14 @@ import { redirect, useRouter } from "next/navigation"
 import { useState, useEffect } from "react"
 import { TripsTable } from "@/components/trip-monitor/trips-table"
 import { TripDashboard } from "@/components/trip-monitor/trip-dashboard"
-import { TripPlannerWizard } from "@/components/TripPlannerWizard"
+import dynamic from 'next/dynamic'
 import { TripPlan } from "@/types/trip"
+
+// Use dynamic import with ssr: false to prevent hydration errors
+const TripPlannerWizard = dynamic(
+  () => import('@/components/TripPlannerWizard'),
+  { ssr: false }
+)
 
 export default function TripMonitorPage() {
   const { data: session, status } = useSession({

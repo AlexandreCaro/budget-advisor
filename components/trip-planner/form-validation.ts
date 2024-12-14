@@ -1,351 +1,296 @@
-import { TripPlanData } from '@/types/trip-planner'
-import { cn } from "@/lib/utils"
+import { FormState } from '@/types/trip-planner';
+import { cn } from '@/lib/utils';
 
-// Define field error states
-export type FieldState = {
-  error: boolean;
-  message?: string;
-  className?: string;
+export interface ValidationErrors {
+  [key: string]: string;
 }
 
-// Define form state type
-export type FormValidationState = {
-  name: FieldState;
-  country: FieldState;
-  dates: FieldState;
-  travelers: FieldState;
-  currency: FieldState;
-  budget: FieldState;
-  categories: FieldState;
-  allocation: FieldState;
-  [key: string]: FieldState;
-}
+export function validateStep(step: number, data: any): ValidationErrors {
+  const errors: ValidationErrors = {};
 
-// Base error styles that should be consistent across all fields
-const errorStyles = 'border-red-500 ring-1 ring-red-500 focus-visible:ring-red-500';
-
-// Base styles for inputs and selects
-const baseInputStyles = "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50";
-
-// Add new type for field updates
-export type FieldUpdate = {
-  field: string;
-  value: any;
-  currentErrors: Record<string, string>;
-}
-
-// Function to check if a field value is valid
-function isFieldValid(field: string, value: any): boolean {
-  switch (field) {
-    case 'name':
-      return !!value?.trim() && value.length >= 3 && value.length <= 50;
-    case 'country':
-      return !!value?.trim();
-    case 'startDate':
-    case 'endDate':
-      return value instanceof Date && !isNaN(value);
-    case 'travelers':
-      return !!value && parseInt(value) >= 1;
-    case 'currency':
-      return !!value?.trim();
-    case 'overallBudget':
-      return !!value && parseFloat(value) > 0;
-    default:
-      return true;
+  // Global validation - no nulls or undefined allowed anywhere
+  if (!data) {
+    errors.global = 'No data provided';
+    return errors;
   }
-}
 
-// Function to clear field error when value is valid
-export function clearFieldError(update: FieldUpdate): Record<string, string> {
-  const { field, value, currentErrors } = update;
-  const newErrors = { ...currentErrors };
-
-  // Special handling for dates
-  if (field === 'startDate' || field === 'endDate') {
-    if (isFieldValid(field, value)) {
-      delete newErrors.dates;
+  // Validate all required fields have actual values
+  Object.entries(data).forEach(([key, value]) => {
+    if (value === null || value === undefined || value === '') {
+      errors[key] = `${key} cannot be empty`;
     }
-    return newErrors;
-  }
-
-  // Handle other fields
-  if (isFieldValid(field, value)) {
-    delete newErrors[field];
-  }
-
-  return newErrors;
-}
-
-// Update getFieldState to handle dynamic validation
-export function getFieldState(error?: string, value?: any, field?: string): FieldState {
-  if (!error) {
-    // Check if the field has a valid value
-    if (field && value && isFieldValid(field, value)) {
-      return { error: false };
-    }
-    // Field is empty but no error yet
-    return { error: false };
-  }
-  
-  return {
-    error: true,
-    message: error,
-    className: errorStyles
-  };
-}
-
-// Get class names for standard input fields
-export function getInputClassName(fieldState?: FieldState, baseClass: string = '') {
-  return cn(
-    baseInputStyles,
-    baseClass,
-    fieldState?.error && errorStyles
-  )
-}
-
-// Get class names for select/combobox triggers
-export function getSelectTriggerClassName(fieldState?: FieldState) {
-  return cn(
-    baseInputStyles,
-    "flex items-center justify-between",
-    fieldState?.error && errorStyles
-  )
-}
-
-// Get class names for date picker buttons
-export function getDatePickerClassName(fieldState?: FieldState, hasValue: boolean = true) {
-  return cn(
-    baseInputStyles,
-    "w-full justify-start text-left font-normal",
-    !hasValue && "text-muted-foreground",
-    fieldState?.error && errorStyles
-  )
-}
-
-// Get class names for category container
-export function getCategoryContainerClassName(fieldState?: FieldState) {
-  return cn(
-    "space-y-4 rounded-md",
-    fieldState?.error && 'p-4 border border-red-500'
-  )
-}
-
-// Get class names for currency trigger
-export function getCurrencyTriggerClassName(fieldState?: FieldState) {
-  return cn(
-    baseInputStyles,
-    "flex items-center justify-between",
-    fieldState?.error && errorStyles
-  )
-}
-
-// Get class names for budget input
-export function getBudgetInputClassName(fieldState?: FieldState) {
-  return cn(
-    baseInputStyles,
-    "pl-8",
-    fieldState?.error && errorStyles
-  )
-}
-
-export async function validateStep(step: number, data: TripPlanData): Promise<{
-  isValid: boolean;
-  fields: FormValidationState;
-}> {
-  const errors: Record<string, string> = {};
-  const fields: FormValidationState = {
-    name: getFieldState(undefined, data.name, 'name'),
-    country: getFieldState(undefined, data.country, 'country'),
-    dates: getFieldState(undefined, data.startDate && data.endDate, 'dates'),
-    travelers: getFieldState(undefined, data.travelers, 'travelers'),
-    currency: getFieldState(undefined, data.currency, 'currency'),
-    budget: getFieldState(undefined, data.overallBudget, 'budget'),
-    categories: getFieldState(undefined, data.selectedCategories?.length > 0, 'categories'),
-    allocation: { error: false }
-  };
+  });
 
   switch (step) {
-    case 1:
-      if (!data.name?.trim()) {
-        errors.name = "Trip name is required";
-      } else if (data.name.length < 3) {
-        errors.name = "Trip name must be at least 3 characters";
-      } else if (data.name.length > 50) {
-        errors.name = "Trip name must be less than 50 characters";
+    case 1: // Name step
+      if (!data.name?.trim() || data.name.length < 3 || data.name.length > 50) {
+        errors.name = 'Trip name must be between 3 and 50 characters';
       }
-      fields.name = getFieldState(errors.name);
+      if (!/^[a-zA-Z0-9\s\-_]+$/.test(data.name)) {
+        errors.name = 'Trip name can only contain letters, numbers, spaces, hyphens and underscores';
+      }
       break;
 
-    case 2:
-      // Country validation
-      if (!data.country?.trim()) {
-        errors.country = "Country is required";
+    case 2: // Destination step
+      if (!data.country?.code || !data.country?.value) {
+        errors.country = 'Valid country selection is required';
       }
-      fields.country = getFieldState(errors.country);
-
-      // Dates validation
-      if (!data.startDate || !data.endDate) {
-        errors.dates = "Both start and end dates are required";
-      } else if (data.endDate < data.startDate) {
-        errors.dates = "End date cannot be before start date";
-      } else if (data.startDate < new Date()) {
-        errors.dates = "Start date cannot be in the past";
+      if (!data.city?.value || !data.city?.lat || !data.city?.lng) {
+        errors.city = 'Valid city with coordinates is required';
       }
-      fields.dates = getFieldState(errors.dates);
-
-      // Travelers validation
-      if (!data.travelers || parseInt(data.travelers) < 1) {
-        errors.travelers = "Number of travelers is required";
+      if (!data.departureLocation?.city || !data.departureLocation?.lat || !data.departureLocation?.lng) {
+        errors.departureLocation = 'Valid departure location with coordinates is required';
       }
-      fields.travelers = getFieldState(errors.travelers);
-
-      // Currency validation
-      if (!data.currency?.trim()) {
-        errors.currency = "Currency is required";
+      // Validate coordinates are within valid ranges
+      if (data.city?.lat && (data.city.lat < -90 || data.city.lat > 90)) {
+        errors.city = 'Invalid latitude';
       }
-      fields.currency = getFieldState(errors.currency);
-
-      // Budget validation
-      if (!data.overallBudget || parseFloat(data.overallBudget) <= 0) {
-        errors.budget = "Valid budget amount is required";
+      if (data.city?.lng && (data.city.lng < -180 || data.city.lng > 180)) {
+        errors.city = 'Invalid longitude';
       }
-      fields.budget = getFieldState(errors.budget);
       break;
 
-    case 3:
-      // Categories validation
-      if (!data.selectedCategories?.length) {
-        errors.categories = "At least one expense category must be selected";
+    case 3: // Dates step
+      const now = new Date();
+      const start = new Date(data.startDate);
+      const end = new Date(data.endDate);
+      
+      if (!(start instanceof Date) || isNaN(start.getTime())) {
+        errors.startDate = 'Invalid start date';
       }
-      fields.categories = getFieldState(errors.categories);
+      if (!(end instanceof Date) || isNaN(end.getTime())) {
+        errors.endDate = 'Invalid end date';
+      }
+      if (start < now) {
+        errors.startDate = 'Start date cannot be in the past';
+      }
+      if (end <= start) {
+        errors.endDate = 'End date must be after start date';
+      }
+      const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+      if (days < 1 || days > 365) {
+        errors.endDate = 'Trip duration must be between 1 and 365 days';
+      }
       break;
 
-    case 4:
-      // Budget allocation validation
-      const totalPercentage = data.expenses
-        .filter(expense => data.selectedCategories.includes(expense.key))
-        .reduce((total, expense) => {
-          if (expense.budgetType === 'percentage') {
-            return total + (parseFloat(expense.budgetValue) || 0);
+    case 4: // Travelers & Currency step
+      const travelers = parseInt(data.travelers);
+      if (!Number.isInteger(travelers) || travelers < 1 || travelers > 50) {
+        errors.travelers = 'Number of travelers must be between 1 and 50';
+      }
+      if (!data.currency?.trim() || !/^[A-Z]{3}$/.test(data.currency)) {
+        errors.currency = 'Valid 3-letter currency code is required';
+      }
+      break;
+
+    case 5: // Budget step
+      const budget = parseFloat(data.overallBudget);
+      if (!budget || isNaN(budget) || budget <= 0 || budget > 1000000000) {
+        errors.overallBudget = 'Budget must be between 1 and 1,000,000,000';
+      }
+      
+      if (!Array.isArray(data.selectedCategories) || data.selectedCategories.length === 0) {
+        errors.selectedCategories = 'At least one expense category is required';
+      }
+      
+      if (!Array.isArray(data.expenses) || data.expenses.length === 0) {
+        errors.expenses = 'Expense categories are required';
+      } else {
+        let totalAllocation = 0;
+        data.expenses.forEach((expense: any, index: number) => {
+          if (!expense.key || !expense.name) {
+            errors[`expense_${index}`] = 'Invalid expense category';
           }
-          const budget = parseFloat(data.overallBudget ?? "0") || 1;
-          return total + ((parseFloat(expense.budgetValue) || 0) / budget * 100);
-        }, 0);
-
-      if (Math.abs(totalPercentage - 100) > 0.1) {
-        errors.allocation = `Total budget allocation must be 100% (currently ${totalPercentage.toFixed(1)}%)`;
-      }
-      fields.allocation = getFieldState(errors.allocation);
-
-      // Validate pre-booked expenses
-      data.expenses
-        .filter(expense => expense.preBooked && data.selectedCategories.includes(expense.key))
-        .forEach(expense => {
-          if (!expense.cost || parseFloat(expense.cost) <= 0) {
-            const errorKey = `expense_${expense.key}`;
-            errors[errorKey] = `Pre-booked ${expense.name.toLowerCase()} cost is required`;
-            fields[errorKey] = getFieldState(errors[errorKey]);
+          const value = parseFloat(expense.budgetValue);
+          if (!value || value <= 0) {
+            errors[`expense_${index}`] = 'Budget allocation must be greater than 0';
           }
+          if (!['budget', 'medium', 'premium'].includes(expense.selectedTier)) {
+            errors[`expense_${index}_tier`] = 'Valid price tier (budget/medium/premium) must be selected';
+          }
+          totalAllocation += value || 0;
         });
+
+        // Strict 100% allocation check with very small margin for floating point errors
+        if (Math.abs(totalAllocation - 100) > 0.001) {
+          errors.expenses = `Total allocation must be exactly 100% (currently ${totalAllocation.toFixed(3)}%)`;
+        }
+      }
       break;
   }
 
-  return {
-    isValid: Object.keys(errors).length === 0,
-    fields
-  };
+  return errors;
 }
 
-export async function handleStepSave(
-  step: number, 
-  formData: any, 
+// Add this to your API route
+export async function validateTripData(data: any) {
+  const errors: ValidationErrors = {};
+
+  // Basic data validation - no empty values allowed
+  if (!data.name?.trim() || data.name.length < 3) {
+    errors.name = 'Trip name must be at least 3 characters';
+  }
+  if (!data.country?.trim()) {
+    errors.country = 'Country selection is required';
+  }
+  if (!data.city?.value) {
+    errors.city = 'City selection is required';
+  }
+  if (!data.startDate || !data.endDate) {
+    errors.dates = 'Both start and end dates are required';
+  }
+  
+  const travelers = parseInt(data.travelers);
+  if (!travelers || travelers < 1 || travelers > 50) {
+    errors.travelers = 'Number of travelers must be between 1 and 50';
+  }
+  
+  if (!data.currency?.trim()) {
+    errors.currency = 'Currency selection is required';
+  }
+  
+  const budget = parseFloat(data.overallBudget);
+  if (!budget || budget <= 0) {
+    errors.overallBudget = 'Budget must be greater than 0';
+  }
+
+  // Validate expense allocations
+  if (data.expenses?.length) {
+    let totalAllocation = 0;
+    data.expenses.forEach((expense: any, index: number) => {
+      const value = parseFloat(expense.budgetValue);
+      if (!value || value <= 0) {
+        errors[`expense_${index}`] = 'Each expense must have a budget greater than 0';
+      }
+      totalAllocation += value || 0;
+    });
+
+    if (Math.abs(totalAllocation - 100) > 0.01) {
+      errors.expenses = `Total allocation must be exactly 100% (currently ${totalAllocation.toFixed(2)}%)`;
+    }
+  } else {
+    errors.expenses = 'At least one expense category is required';
+  }
+
+  return errors;
+}
+
+export const getInputClassName = (error?: ValidationError | null) => {
+  return error?.error ? "border-red-500" : "";
+};
+
+export const getBudgetInputClassName = (error?: ValidationError | null) => {
+  return `pl-8 ${error?.error ? "border-red-500" : ""}`;
+};
+
+export const getCurrencyTriggerClassName = (error: ErrorState) => {
+  return cn(
+    "w-full",
+    error?.error && "border-red-500"
+  );
+};
+
+export const getDatePickerClassName = (error?: ValidationError | null, hasValue?: boolean) => {
+  return cn(
+    "w-full justify-start text-left font-normal",
+    !hasValue && "text-muted-foreground",
+    error?.error && "border-red-500"
+  );
+};
+
+export const handleStepSave = async (
+  step: number,
+  formData: any,
   setErrors: (errors: any) => void
-): Promise<{ isValid: boolean; updatedData?: any }> {
+) => {
   try {
-    // Validate current step
-    const validation = await validateStep(step, formData);
-    if (!validation.isValid) {
-      setErrors(validation.errors || {});
+    // Validate the current step
+    const stepErrors = validateStep(step, formData);
+    if (Object.keys(stepErrors).length > 0) {
+      setErrors(stepErrors);
       return { isValid: false };
     }
 
-    // Check if we're editing or creating
-    const isEditing = !!formData.id;
-    
-    if (step === 1) {
-      if (isEditing) {
-        // Update existing trip
-        console.log('Updating existing trip:', formData.id);
-        const updateResponse = await fetch(`/api/trip-plans/${formData.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: formData.name,
-            status: formData.status
-          })
-        });
+    // If we have a trip ID, update it
+    if (formData.id) {
+      const response = await fetch(`/api/trip-plans/${formData.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...getStepData(step, formData),
+          step
+        }),
+      });
 
-        if (!updateResponse.ok) {
-          const errorData = await updateResponse.json();
-          throw new Error(errorData.error || 'Failed to update trip plan');
-        }
-
-        const updatedTrip = await updateResponse.json();
-        console.log('Updated trip:', updatedTrip);
-        
-        return {
-          isValid: true,
-          updatedData: updatedTrip
-        };
-      } else {
-        // Create new trip
-        console.log('Creating new trip plan...');
-        const createResponse = await fetch('/api/trip-plans', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: formData.name,
-            status: 'DRAFT'
-          })
-        });
-
-        if (!createResponse.ok) {
-          const errorData = await createResponse.json();
-          throw new Error(errorData.error || 'Failed to create trip plan');
-        }
-
-        const newTrip = await createResponse.json();
-        console.log('Created new trip:', newTrip);
-        
-        return {
-          isValid: true,
-          updatedData: newTrip
-        };
+      if (!response.ok) {
+        throw new Error('Failed to save progress');
       }
+
+      const updatedData = await response.json();
+      return {
+        isValid: true,
+        updatedData
+      };
     }
 
-    // For other steps, always update
-    console.log(`Updating trip plan ${formData.id} for step ${step}`);
-    const updateResponse = await fetch(`/api/trip-plans/${formData.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(formData)
+    // If no ID exists, create new trip plan
+    const response = await fetch('/api/trip-plans', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: formData.name,
+        userId: formData.userId
+      }),
     });
 
-    if (!updateResponse.ok) {
-      const errorData = await updateResponse.json();
-      throw new Error(errorData.error || 'Failed to update trip plan');
+    if (!response.ok) {
+      throw new Error('Failed to create trip plan');
     }
 
-    const updatedTrip = await updateResponse.json();
-    console.log(`Step ${step} - Update successful:`, updatedTrip);
-
+    const newTripPlan = await response.json();
     return {
       isValid: true,
-      updatedData: updatedTrip
+      updatedData: {
+        ...formData,
+        id: newTripPlan.id
+      }
     };
   } catch (error) {
-    console.error(`Failed to save step ${step}:`, error);
+    console.error('Error saving progress:', error);
     throw error;
   }
-} 
+};
+
+// Helper function to get relevant data for each step
+const getStepData = (step: number, formData: any) => {
+  switch (step) {
+    case 1:
+      return {
+        name: formData.name
+      };
+    case 2:
+      return {
+        country: formData.country,
+        city: formData.city,
+        startDate: formData.startDate,
+        endDate: formData.endDate,
+        travelers: formData.travelers,
+        currency: formData.currency,
+        overallBudget: formData.overallBudget
+      };
+    case 3:
+      return {
+        selectedCategories: formData.selectedCategories
+      };
+    case 4:
+      return {
+        expenses: formData.expenses
+      };
+    default:
+      return {};
+  }
+}; 

@@ -2,7 +2,7 @@
 
 import { useSession } from "next-auth/react"
 import { redirect } from "next/navigation"
-import { TripPlannerWizard } from "@/components/TripPlannerWizard"
+import TripPlannerWizard from '@/components/TripPlannerWizard'
 
 export default function TripPlannerPage() {
   const { data: session, status } = useSession({

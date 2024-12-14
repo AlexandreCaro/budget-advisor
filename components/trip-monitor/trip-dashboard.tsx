@@ -21,7 +21,7 @@ import { Badge } from "@/components/ui/badge"
 import { format } from "date-fns"
 import { Switch } from "@/components/ui/switch"
 import { BudgetAllocationPreview } from "@/components/trip-planner/budget-allocation-preview"
-import { TripPlannerWizard } from "@/components/TripPlannerWizard"
+import TripPlannerWizard from "@/components/TripPlannerWizard"
 import { useRouter } from 'next/navigation'
 
 interface TripDashboardProps {
