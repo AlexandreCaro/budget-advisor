@@ -225,13 +225,13 @@ function generateFlightPrompt(params: GetEstimatesParams): string {
     : '';
 
   // Format dates
-  const dateInfo = `\nOutbound date: ${departureLocation?.outboundDate?.toISOString().split('T')[0] || 'flexible'}${
+  const dateInfo = `\nOutbound date: ${departureLocation?.outboundDate?.toISOString().split('T')[0] || params.startDate.toISOString().split('T')[0]}${
     departureLocation?.inboundDate 
       ? '\nReturn date: ' + departureLocation.inboundDate.toISOString().split('T')[0]
-      : ''
+      : '\nReturn date: ' + params.endDate.toISOString().split('T')[0]
   }`;
 
-  return `Search for ${departureLocation?.isRoundTrip ? 'round-trip' : 'one-way'} flight costs 
+  return `Search for round-trip flight costs 
   from ${departureLocation?.name}${departureLocation?.code ? ` (${departureLocation.code})` : ''} 
   to ${params.country}.${routeInfo}${dateInfo}
   Number of travelers: ${params.travelers}
@@ -240,26 +240,31 @@ function generateFlightPrompt(params: GetEstimatesParams): string {
   {
     "flight": {
       "budget": {
-        "min": number,
-        "max": number,
-        "average": number,
+        "min": number (total cost for round-trip),
+        "max": number (total cost for round-trip),
+        "average": number (total cost for round-trip),
         "confidence": number,
         "source": string,
-        "references": array of strings with specific airline and route options
+        "references": array of strings with specific airline and route options including:
+          - Outbound flight details (airline, route, times)
+          - Return flight details (airline, route, times)
+          - Total round-trip price
+          - Booking link if available
       },
       "medium": { same structure },
       "premium": { same structure }
     }
   }
   
-  All costs in ${params.currency}.
+  All costs in ${params.currency} for TOTAL round-trip price per person.
   Numbers must be valid numbers, not strings.
   Confidence between 0 and 1.
-  Include specific airline references and route options.
+  Include specific airline references with both outbound and return flight details.
   Consider peak/off-peak pricing for the given dates.
   For budget tier: consider low-cost carriers and longer layovers.
   For medium tier: consider major airlines with reasonable layovers.
-  For premium tier: consider direct flights and business class options.`;
+  For premium tier: consider direct flights and business class options.
+  Include booking links to airline websites or travel search engines where possible.`;
 }
 
 // Main estimation function
